@@ -1,0 +1,25 @@
+{
+  "name": "glitchvy-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimalist error reporting — monorepo root (SDK + Laravel server + Admin SPA + front + back).",
+  "license": "AGPL-3.0-only",
+  "packageManager": "pnpm@11.3.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "lint": "pnpm -r --if-present lint",
+    "lint:laravel": "composer -C back validate --strict --no-check-publish",
+    "test": "pnpm -r --if-present test",
+    "test:laravel": "composer -C back test",
+    "build": "pnpm -r --if-present build",
+    "clean": "pnpm -r --if-present clean",
+    "dev:sdk": "pnpm --filter glitchvy dev",
+    "dev:admin": "pnpm --filter glitchvy-admin dev"
+  },
+  "spdx": {
+    "copyright": "2026 DowarDev",
+    "license": "AGPL-3.0-only"
+  }
+}

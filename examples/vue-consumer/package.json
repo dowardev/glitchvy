@@ -1,0 +1,31 @@
+{
+  "name": "glitchvy-vue-consumer-example",
+  "version": "0.1.0",
+  "description": "Vue 3 + Ionic consumer example wired to the glitchvy SDK.",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@ionic/vue": "^8.4.0",
+    "@ionic/vue-router": "^8.4.0",
+    "ionicons": "^7.4.0",
+    "glitchvy": "workspace:*",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.0",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11",
+    "vue-tsc": "^2.1.10"
+  },
+  "spdx": {
+    "copyright": "2026 DowarDev",
+    "license": "AGPL-3.0-only"
+  }
+}

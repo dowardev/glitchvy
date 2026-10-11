@@ -1,0 +1,165 @@
+// SPDX-FileCopyrightText: 2026 DowarDev
+// SPDX-License-Identifier: AGPL-3.0-only
+
+/**
+ * End-to-end tests of the public SDK surface. These exercise the wiring from
+ * {@link initErrorReporter} → auto-capture → transport → offline queue.
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  addBreadcrumb,
+  flush,
+  getQueueSize,
+  initErrorReporter,
+  reportError,
+  setUserContext,
+  shutdown,
+} from '../src/index.js';
+import * as queue from '../src/core/queue.js';
+
+const CFG = {
+  ingestionUrl: '/api/glitchvy/errors',
+  apiKey: 'gvy_test',
+  appVersion: '0.1.0',
+  environment: 'test',
+  scrubRules: {
+    redactFields: ['name', 'amount'],
+    redactContexts: ['entry'],
+  },
+  maxRetries: 1,
+  retryBaseMs: 1,
+};
+
+beforeEach(() => {
+  shutdown();
+  vi.unstubAllGlobals();
+});
+
+afterEach(() => {
+  shutdown();
+  vi.unstubAllGlobals();
+});
+
+describe('initErrorReporter', () => {
+  it('is idempotent (re-init does not double-install hooks)', async () => {
+    initErrorReporter(CFG);
+    initErrorReporter(CFG);
+    // Replacing config does not change that hooks are installed — verifying
+    // by trying to register a callback and checking the state was overwritten.
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchMock);
+    await reportError('hello');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('reportError before init warns and drops the event', async () => {
+    const originalWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await reportError('orphan');
+    expect(originalWarn).toHaveBeenCalled();
+    expect(await queue.size()).toBe(0);
+    originalWarn.mockRestore();
+  });
+});
+
+describe('reportError', () => {
+  it('POSTs an event and resolves cleanly on 2xx', async () => {
+    initErrorReporter(CFG);
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetchMock);
+    await reportError(new Error('hi'), { entityType: 'budget' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      appVersion: '0.1.0',
+      environment: 'test',
+      level: 'error',
+      error: { name: 'Error', message: 'hi' },
+      context: { entityType: 'budget' },
+    });
+    expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer gvy_test');
+  });
+
+  it('scrubs context.data per configured rules', async () => {
+    initErrorReporter(CFG);
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetchMock);
+    await reportError(new Error('hi'), {
+      data: { entry: { name: 'Comida', qty: 2 }, balance: 100 },
+    });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as {
+      context: { data: { entry: { name: string; qty: number }; balance: number } };
+    };
+    expect(body.context.data.entry.name).toBe('[REDACTED]');
+    expect(body.context.data.entry.qty).toBe(2);
+    // Root-level `balance` is not in any context → unredacted.
+    expect(body.context.data.balance).toBe(100);
+  });
+
+  it('attaches user context + breadcrumb trail', async () => {
+    initErrorReporter(CFG);
+    setUserContext({ userId: '42', tier: 'pro' });
+    addBreadcrumb('opened form');
+    addBreadcrumb('clicked save');
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetchMock);
+    await reportError(new Error('hi'));
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as {
+      user: Record<string, unknown>;
+      breadcrumbs: { message: string }[];
+    };
+    expect(body.user).toEqual({ userId: '42', tier: 'pro' });
+    expect(body.breadcrumbs.map((b) => b.message)).toEqual(['opened form', 'clicked save']);
+  });
+
+  it('queues offline events when the server is down', async () => {
+    initErrorReporter(CFG);
+    const fetchMock = vi.fn().mockRejectedValue(new Error('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+    await reportError(new Error('will be queued'));
+    expect(await queue.size()).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // initial + 1 retry
+  });
+});
+
+describe('flush / getQueueSize', () => {
+  it('flush() drains queued events when the server is back', async () => {
+    // First send: server down → queue
+    let serveUp = false;
+    const fetchMock = vi.fn().mockImplementation(() => {
+      if (!serveUp) return Promise.reject(new Error('offline'));
+      return Promise.resolve({ ok: true, status: 202 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    initErrorReporter(CFG);
+    await reportError(new Error('queued'));
+    expect(await queue.size()).toBe(1);
+
+    serveUp = true;
+    await flush();
+    expect(await queue.size()).toBe(0);
+  });
+
+  it('getQueueSize returns 0 on a healthy queue', async () => {
+    initErrorReporter(CFG);
+    expect(await getQueueSize()).toBe(0);
+  });
+});
+
+describe('shutdown', () => {
+  it('clears auto-capture hooks (console.error no longer triggers report)', async () => {
+    initErrorReporter(CFG);
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetchMock);
+    shutdown();
+    const original = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    // eslint-disable-next-line no-console
+    console.error('boom');
+    await new Promise((r) => setTimeout(r, 5));
+    expect(fetchMock).not.toHaveBeenCalled();
+    original.mockRestore();
+  });
+});

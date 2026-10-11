@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         cacheDirectory=".phpunit.cache"
+         executionOrder="depends,defects"
+         beStrictAboutOutputDuringTests="true"
+         failOnRisky="false"
+         failOnWarning="true">
+
+  <testsuites>
+    <testsuite name="Glitchvy Laravel SDK Test Suite">
+      <directory>tests</directory>
+      <exclude>tests/TestCase.php</exclude>
+    </testsuite>
+  </testsuites>
+
+  <source>
+    <include>
+      <directory suffix=".php">src</directory>
+    </include>
+  </source>
+
+  <php>
+    <env name="DB_CONNECTION" value="testing"/>
+    <env name="APP_KEY" value="base64:Mh0dGxpdnlUZXN0S2V5VGhhdElzTG9uZ0Vub3VnaEZvclRoaXNUZXN0aW5n"/>
+    <env name="APP_ENV" value="testing"/>
+    <env name="APP_DEBUG" value="true"/>
+    <env name="GLITCHVY_API_KEY" value="gvy_test_api_key_for_unit_tests_only_change_me"/>
+    <env name="GLITCHVY_ADMIN_GUARD" value="web"/>
+    <env name="GLITCHVY_RATE_LIMIT_PER_MINUTE" value="5"/>
+    <env name="GLITCHVY_ROUTES_PREFIX" value="api/glitchvy"/>
+    <env name="GLITCHVY_RETENTION_DAYS" value="30"/>
+    <env name="GLITCHVY_STORAGE_DISK" value="local"/>
+  </php>
+</phpunit>

@@ -1,0 +1,43 @@
+{
+  "name": "glitchvy-admin",
+  "version": "0.1.0",
+  "description": "Vue 3 + Ionic SPA admin dashboard for the glitchvy error reporter.",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -p tsconfig.json --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest",
+    "test:coverage": "vitest --run --coverage",
+    "lint": "vue-tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist coverage"
+  },
+  "dependencies": {
+    "@ionic/vue": "^8.4.0",
+    "@ionic/vue-router": "^8.4.0",
+    "ionicons": "^7.4.0",
+    "pinia": "^2.2.6",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@vitejs/plugin-vue": "^5.2.0",
+    "@vitest/coverage-v8": "^2.1.8",
+    "@vue/test-utils": "^2.4.6",
+    "fake-indexeddb": "^6.0.1",
+    "jsdom": "^25.0.1",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.8",
+    "vue-tsc": "^2.1.10"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "spdx": {
+    "copyright": "2026 DowarDev",
+    "license": "AGPL-3.0-only"
+  }
+}

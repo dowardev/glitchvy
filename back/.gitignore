@@ -1,0 +1,10 @@
+# ============================================================
+# glitchvy/laravel-sdk — gitignore
+# ============================================================
+
+vendor/
+composer.lock
+.phpunit.cache/
+.phpunit.result.cache
+coverage/
+storage/

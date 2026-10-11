@@ -1,0 +1,216 @@
+// SPDX-FileCopyrightText: 2026 DowarDev
+// SPDX-License-Identifier: AGPL-3.0-only
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { Mock } from 'vitest';
+import { buildEvent, flushQueue, makeScrubCtx, normalizeError, send, sendOnce } from '../src/core/report.js';
+import type { InitConfig, ReportEvent } from '../src/types.js';
+import * as queue from '../src/core/queue.js';
+import { resetState, getState, pushBreadcrumb } from '../src/core/state.js';
+
+const BASE_CONFIG: InitConfig = {
+  ingestionUrl: '/api/glitchvy/errors',
+  apiKey: 'gvy_test',
+  appVersion: '0.1.0',
+  environment: 'test',
+  scrubRules: {
+    redactFields: ['name', 'amount', 'balance', 'notes'],
+    redactContexts: ['entry', 'supplier', 'account'],
+  },
+  maxRetries: 1,
+  retryBaseMs: 1, // tiny so tests are fast
+};
+
+function makeEvent(eventId = 'e-1'): ReportEvent {
+  return {
+    eventId,
+    timestamp: '2026-01-01T00:00:00.000Z',
+    appVersion: '0.1.0',
+    environment: 'test',
+    platform: 'web',
+    route: '/',
+    userAgent: 'jest',
+    level: 'error',
+    error: { name: 'Error', message: 'x' },
+    context: {},
+    breadcrumbs: [],
+  };
+}
+
+beforeEach(() => {
+  resetState();
+  vi.unstubAllGlobals();
+});
+
+describe('normalizeError', () => {
+  it('null/undefined → null', () => {
+    expect(normalizeError(null)).toBeNull();
+    expect(normalizeError(undefined)).toBeNull();
+  });
+
+  it('string → Error shape with that message', () => {
+    expect(normalizeError('boom')).toEqual({ name: 'Error', message: 'boom' });
+  });
+
+  it('Error → keeps name/message/stack, adds type from constructor', () => {
+    class CustomErr extends Error {
+      constructor() {
+        super('m');
+        this.name = 'CustomErr';
+      }
+    }
+    const out = normalizeError(new CustomErr());
+    expect(out?.name).toBe('CustomErr');
+    expect(out?.message).toBe('m');
+    expect(out?.type).toBe('CustomErr');
+    expect(typeof out?.stack).toBe('string');
+  });
+
+  it('plain object → shape with JSON-stringified message', () => {
+    const out = normalizeError({ name: 'X', message: 'y', stack: 's' });
+    expect(out?.name).toBe('X');
+    expect(out?.message).toBe('y');
+    expect(out?.stack).toBe('s');
+  });
+
+  it('circular object → falls back to String()', () => {
+    const circ: Record<string, unknown> = { name: 'C' };
+    circ.self = circ;
+    const out = normalizeError(circ);
+    expect(out?.name).toBe('C');
+    // Either message is a circular-safe JSON fallback or a String() fallback.
+    expect(typeof out?.message).toBe('string');
+  });
+
+  it('number/boolean → Error shape', () => {
+    expect(normalizeError(42)).toEqual({ name: 'Error', message: '42' });
+    expect(normalizeError(true)).toEqual({ name: 'Error', message: 'true' });
+  });
+});
+
+describe('buildEvent', () => {
+  it('carries config + env + level + error info', () => {
+    const ctx = makeScrubCtx(BASE_CONFIG);
+    const ev = buildEvent(BASE_CONFIG, ctx, new Error('boom'), { entityType: 'x' }, 'error');
+    expect(ev.appVersion).toBe('0.1.0');
+    expect(ev.environment).toBe('test');
+    expect(ev.error.message).toBe('boom');
+    expect(ev.context.entityType).toBe('x');
+    expect(ev.eventId).toMatch(/.+/);
+    expect(ev.timestamp).toMatch(/\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('scrubs context.data using the scrub rules', () => {
+    const ctx = makeScrubCtx(BASE_CONFIG);
+    const ev = buildEvent(BASE_CONFIG, ctx, new Error('boom'), {
+      data: {
+        entry: { name: 'Comida', amount: 100 },
+        balance: 100,
+      },
+    }, 'error');
+    const data = ev.context.data as Record<string, unknown>;
+    const entry = data.entry as Record<string, unknown>;
+    expect(entry.name).toBe('[REDACTED]');
+    expect(entry.amount).toBe('[REDACTED]');
+    expect(data.balance).toBe(100); // not in any context
+  });
+
+  it('attaches user context + breadcrumb trail', () => {
+    const state = getState();
+    state.user = { userId: '42' };
+    pushBreadcrumb({ message: 'a', timestamp: 't1' });
+    pushBreadcrumb({ message: 'b', timestamp: 't2' });
+    const ctx = makeScrubCtx(BASE_CONFIG);
+    const ev = buildEvent(BASE_CONFIG, ctx, new Error('x'), undefined, 'error');
+    expect(ev.user).toEqual({ userId: '42' });
+    expect(ev.breadcrumbs.map((b) => b.message)).toEqual(['a', 'b']);
+  });
+});
+
+describe('sendOnce', () => {
+  it('POSTs JSON with bearer + event id headers', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchMock);
+    const event = makeEvent();
+    await sendOnce(event, BASE_CONFIG);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(BASE_CONFIG.ingestionUrl);
+    expect(init.method).toBe('POST');
+    expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer gvy_test');
+    expect((init.headers as Record<string, string>)['X-Glitchvy-Event-Id']).toBe(event.eventId);
+    expect(init.body).toBe(JSON.stringify(event));
+  });
+});
+
+describe('send', () => {
+  it('returns "sent" on 2xx response', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await send(makeEvent('a'), { ...BASE_CONFIG, maxRetries: 0 });
+    expect(res).toBe('sent');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(await queue.size()).toBe(0);
+  });
+
+  it('returns "queued" after retry budget exhausted for retryable status', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 503 });
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await send(makeEvent('a'), { ...BASE_CONFIG, maxRetries: 1, retryBaseMs: 1 });
+    expect(res).toBe('queued');
+    expect(fetchMock).toHaveBeenCalledTimes(2); // initial + 1 retry
+    expect(await queue.size()).toBe(1);
+  });
+
+  it('returns "queued" for non-retryable 4xx', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 400 });
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await send(makeEvent('a'), { ...BASE_CONFIG, maxRetries: 3, retryBaseMs: 1 });
+    expect(res).toBe('queued');
+    // No retries for 400.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns "queued" on network failure', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await send(makeEvent('a'), { ...BASE_CONFIG, maxRetries: 1, retryBaseMs: 1 });
+    expect(res).toBe('queued');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns "dropped" when queue is at maxQueueSize', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+    await queue.enqueue(makeEvent('preload'));
+    const res = await send(makeEvent('a'), { ...BASE_CONFIG, maxQueueSize: 1, maxRetries: 0 });
+    expect(res).toBe('dropped');
+  });
+});
+
+describe('flushQueue', () => {
+  it('drains the queue and removes successfully-sent events', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation((_url: string, init: RequestInit) => {
+        const body = JSON.parse(init.body as string) as ReportEvent;
+        return Promise.resolve({ ok: body.eventId !== 'fail', status: 200 });
+      });
+    vi.stubGlobal('fetch', fetchMock as Mock);
+    await queue.enqueue(makeEvent('a'));
+    await queue.enqueue(makeEvent('fail'));
+    await queue.enqueue(makeEvent('b'));
+    const stats = await flushQueue(BASE_CONFIG);
+    expect(stats.sent).toBe(2);
+    expect(stats.requeued).toBe(1);
+    expect(await queue.size()).toBe(1);
+  });
+
+  it('does nothing when the queue is empty', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const stats = await flushQueue(BASE_CONFIG);
+    expect(stats).toEqual({ sent: 0, requeued: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

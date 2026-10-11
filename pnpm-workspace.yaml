@@ -1,0 +1,20 @@
+# ============================================================
+# glitchvy monorepo — pnpm workspaces
+# https://pnpm.io/settings
+# ============================================================
+packages:
+  - 'packages/*' # the SDK (npm `glitchvy`) — the only publishable package
+  - 'front' # the admin SPA (Vue 3 + Ionic) — app, not published
+  - 'examples/*'
+
+allowBuilds:
+  vue-demi: set this to true or false
+
+# `back/` is a Laravel project managed by composer, not pnpm.
+
+# Whitelist of dependencies whose build/postinstall scripts are allowed to run.
+# Pnpm 11+ no longer reads `pnpm.onlyBuiltDependencies` from package.json — it
+# lives here in the workspace config.
+onlyBuiltDependencies:
+  - 'esbuild'
+  - 'vue-demi'

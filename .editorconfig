@@ -1,0 +1,35 @@
+# ============================================================
+# glitchvy monorepo .editorconfig
+# ============================================================
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# ============================================================
+# TypeScript / Vue / JS (SDK + admin)
+# ============================================================
+[*.{ts,tsx,js,jsx,vue,json,md}]
+indent_size = 2
+quote_type = single
+tab_width = 2
+
+# ============================================================
+# PHP (Laravel SDK)
+# ============================================================
+[*.php]
+indent_size = 4
+quote_type = single
+tab_width = 4
+
+[composer.json]
+indent_size = 4
+quote_type = double
+
+# Makefile / shell
+[Makefile]
+indent_style = tab

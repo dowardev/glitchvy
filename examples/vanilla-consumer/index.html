@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>glitchvy · vanilla consumer example</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 540px; margin: 40px auto; padding: 0 16px; }
+      button { padding: 8px 16px; font-size: 14px; cursor: pointer; }
+      .log { background: #f5f5f5; padding: 8px; border-radius: 4px; margin-top: 16px; font-family: ui-monospace, monospace; font-size: 12px; }
+      code { background: #f5f5f5; padding: 2px 4px; border-radius: 3px; }
+    </style>
+  </head>
+  <body>
+    <h1>glitchvy · vanilla consumer</h1>
+    <p>
+      A small demo of wiring the <code>glitchvy</code> SDK in a plain HTML+JS page.
+      Replace <code>appVersion</code>, <code>apiKey</code> and <code>ingestionUrl</code> for your backend.
+    </p>
+
+    <div>
+      <button id="report-btn">Report a bug (silent)</button>
+      <button id="throw-btn">Trigger a window error</button>
+    </div>
+
+    <pre class="log" id="log">(empty)</pre>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
