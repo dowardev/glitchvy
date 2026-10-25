@@ -70,6 +70,20 @@ describe('initErrorReporter', () => {
     expect(body.error.message).toBe('early-boot');
     originalWarn.mockRestore();
   });
+  it('delivers the buffered pre-init event even if shutdown() runs right after init', async () => {
+    const originalWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetchMock);
+    await reportError(new Error('early-boot'));
+    initErrorReporter(CFG);
+    shutdown();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as { error: { message: string } };
+    expect(body.error.message).toBe('early-boot');
+    originalWarn.mockRestore();
+  });
 });
 
 describe('reportError', () => {

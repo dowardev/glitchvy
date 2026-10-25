@@ -25,6 +25,21 @@ const RETRYABLE_STATUS = new Set<number>([408, 425, 429, 500, 502, 503, 504]);
  */
 const KEEPALIVE_BODY_LIMIT_BYTES = 64 * 1024;
 
+/**
+ * Total wall-clock budget for one queue flush. Without it, the per-event
+ * retry budget multiplies by the queue length: 100 queued events against a
+ * dead backend would take minutes and fire hundreds of requests.
+ */
+const FLUSH_TIME_BUDGET_MS = 30_000;
+
+/** Current flush budget. Mutable only through the test-only helper below. */
+let flushBudgetMs = FLUSH_TIME_BUDGET_MS;
+
+/** Test-only helper. Production code never calls this. */
+export function __setFlushBudgetMs(ms: number): void {
+  flushBudgetMs = ms;
+}
+
 export type SendResult = 'sent' | 'queued' | 'dropped';
 
 function describeUnserializable(value: Record<string, unknown>): string {
@@ -91,6 +106,13 @@ function newEventId(): string {
 }
 
 /** Build a {@link ReportEvent} from a thrown value and optional context. */
+/** True when the value can be stored as an integer column. */
+function isIntegerLike(value: unknown): boolean {
+  if (typeof value === 'number') return Number.isInteger(value);
+  if (typeof value === 'string') return /^-?\d+$/.test(value.trim());
+  return false;
+}
+
 export function buildEvent(
   config: InitConfig,
   scrubCtx: ScrubContext,
@@ -127,6 +149,18 @@ export function buildEvent(
   };
   if (Object.keys(state.user).length > 0) {
     event.user = { ...state.user };
+  }
+
+  // The ingestion endpoint stores `entity_id` in an integer column, so a
+  // non-numeric id cannot be sent as one. It is preserved in `data` instead
+  // of being dropped, and it goes through the same scrubbing as the rest of
+  // the payload.
+  if (event.context.entityId !== undefined && !isIntegerLike(event.context.entityId)) {
+    const data = { ...(event.context.data ?? {}) } as Record<string, unknown>;
+    if (!('entity_id_raw' in data)) {
+      data.entity_id_raw = event.context.entityId;
+    }
+    event.context.data = data;
   }
 
   if (event.context.data) {
@@ -216,14 +250,19 @@ function sleep(ms: number): Promise<void> {
 /**
  * Send an event, retrying with exponential backoff on retryable status codes
  * and network failures. Returns `true` when the event was accepted.
+ *
+ * When a `deadline` (absolute epoch ms) is given, no attempt starts after it
+ * and no sleep outlives it.
  */
 async function attemptSend(
   event: ReportEvent,
   config: InitConfig,
   maxRetries: number,
   baseMs: number,
+  deadline?: number,
 ): Promise<boolean> {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (deadline !== undefined && Date.now() >= deadline) return false;
     try {
       const res = await sendOnce(event, config);
       if (res.ok) return true;
@@ -232,8 +271,11 @@ async function attemptSend(
       if (attempt >= maxRetries) return false;
     }
     if (attempt < maxRetries) {
-      const delay = baseMs * Math.pow(2, attempt);
-      await sleep(delay);
+      let delay = baseMs * Math.pow(2, attempt);
+      if (deadline !== undefined) {
+        delay = Math.min(delay, Math.max(0, deadline - Date.now()));
+      }
+      if (delay > 0) await sleep(delay);
     }
   }
   return false;
@@ -266,10 +308,37 @@ async function persist(event: ReportEvent, config: InitConfig): Promise<SendResu
 }
 
 /**
+ * Put events back into the queue, respecting `maxQueueSize`. Returns how many
+ * were actually re-queued.
+ */
+async function requeue(
+  events: ReportEvent[],
+  maxQueueSize: number,
+): Promise<number> {
+  let requeued = 0;
+  for (const event of events) {
+    try {
+      const current = await queue.size();
+      if (current >= maxQueueSize) continue;
+      await queue.enqueue(event);
+      requeued++;
+    } catch {
+      // drop
+    }
+  }
+  return requeued;
+}
+
+/**
  * Drain the offline queue: each event is sent with the same retry budget the
  * consumer configured (`maxRetries` / `retryBaseMs`); failures are
  * re-enqueued (upsert on eventId avoids duplicates) as long as the queue is
  * below `maxQueueSize`.
+ *
+ * The whole flush runs under a wall-clock budget
+ * ({@link FLUSH_TIME_BUDGET_MS}). Events that could not be attempted before
+ * the budget ran out are put back in the queue, so nothing is lost — the
+ * flush just resumes on the next one.
  */
 export async function flushQueue(
   config: InitConfig,
@@ -284,12 +353,21 @@ export async function flushQueue(
   const maxRetries = config.maxRetries ?? 3;
   const baseMs = config.retryBaseMs ?? 1000;
   const maxQueueSize = config.maxQueueSize ?? 100;
+  const deadline = Date.now() + flushBudgetMs;
 
   let sent = 0;
   let requeued = 0;
 
-  for (const event of events) {
-    const success = await attemptSend(event, config, maxRetries, baseMs);
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i]!;
+
+    if (Date.now() >= deadline) {
+      // Out of time: the remaining events go back to the queue untouched.
+      requeued += await requeue(events.slice(i), maxQueueSize);
+      break;
+    }
+
+    const success = await attemptSend(event, config, maxRetries, baseMs, deadline);
     if (success) {
       try {
         await queue.remove(event.eventId);
@@ -300,16 +378,9 @@ export async function flushQueue(
       continue;
     }
 
-    try {
-      // Respect the same cap as `persist()`: a failing backend must not make
-      // the offline queue grow without bound.
-      const current = await queue.size();
-      if (current >= maxQueueSize) continue;
-      await queue.enqueue(event);
-      requeued++;
-    } catch {
-      // drop
-    }
+    // Respect the same cap as `persist()`: a failing backend must not make
+    // the offline queue grow without bound.
+    requeued += await requeue([event], maxQueueSize);
   }
 
   return { sent, requeued };
