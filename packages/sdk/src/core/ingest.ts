@@ -49,6 +49,7 @@ export interface IngestPayload {
 
 /** Length limits enforced by the ingestion endpoint. */
 const MAX_APP_VERSION = 50;
+const MAX_ENVIRONMENT = 50;
 const MAX_ROUTE = 255;
 const MAX_ERROR_NAME = 255;
 const MAX_ERROR_TYPE = 255;
@@ -81,7 +82,7 @@ function toInteger(value: unknown): number | undefined {
  */
 export function toIngestPayload(event: ReportEvent): IngestPayload {
   const payload: IngestPayload = {
-    environment: event.environment,
+    environment: truncate(event.environment, MAX_ENVIRONMENT) as string,
     error_name: truncate(event.error.name || 'Error', MAX_ERROR_NAME) as string,
     error_message: event.error.message || event.error.name || 'Unknown error',
   };

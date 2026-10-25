@@ -3,7 +3,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Mock } from 'vitest';
-import { buildEvent, flushQueue, makeScrubCtx, normalizeError, send, sendOnce } from '../src/core/report.js';
+import { buildEvent, flushQueue, makeScrubCtx, normalizeError, send, sendOnce, __setFlushBudgetMs } from '../src/core/report.js';
 import type { InitConfig, ReportEvent } from '../src/types.js';
 import * as queue from '../src/core/queue.js';
 import { resetState, getState, pushBreadcrumb } from '../src/core/state.js';
@@ -133,6 +133,20 @@ describe('buildEvent', () => {
     const ev = buildEvent(BASE_CONFIG, ctx, new Error('x'), undefined, 'error');
     expect(ev.user).toEqual({ userId: '42' });
     expect(ev.breadcrumbs.map((b) => b.message)).toEqual(['a', 'b']);
+  });
+
+  it('preserves a non-integer entity id in data instead of dropping it', () => {
+    const ctx = makeScrubCtx(BASE_CONFIG);
+    const ev = buildEvent(
+      BASE_CONFIG,
+      ctx,
+      new Error('boom'),
+      { entityId: 'order-123' },
+      'error',
+    );
+    expect(ev.context.entityId).toBe('order-123');
+    const data = ev.context.data as Record<string, unknown>;
+    expect(data.entity_id_raw).toBe('order-123');
   });
 
   it('falls back to a v4 UUID when crypto.randomUUID is unavailable', () => {
@@ -304,5 +318,24 @@ describe('flushQueue', () => {
     const stats = await flushQueue({ ...BASE_CONFIG, maxQueueSize: 1, maxRetries: 0 });
     expect(stats.requeued).toBe(1);
     expect(await queue.size()).toBe(1);
+  });
+
+  it('stops at the flush time budget and puts the untouched events back', async () => {
+    __setFlushBudgetMs(20);
+    try {
+      const fetchMock = vi.fn().mockRejectedValue(new Error('offline'));
+      vi.stubGlobal('fetch', fetchMock);
+      for (let i = 0; i < 6; i++) {
+        await queue.enqueue(makeEvent(`e${i}`));
+      }
+      const stats = await flushQueue({ ...BASE_CONFIG, maxRetries: 3, retryBaseMs: 10 });
+      // The budget cuts the flush short, so not every event was attempted…
+      expect(fetchMock.mock.calls.length).toBeLessThan(6);
+      // …and nothing is lost: the events that were not attempted are queued.
+      expect(stats.requeued).toBeGreaterThan(0);
+      expect(await queue.size()).toBeGreaterThan(0);
+    } finally {
+      __setFlushBudgetMs(30_000);
+    }
   });
 });

@@ -26,6 +26,7 @@ import {
   uninstallAutoCapture,
 } from './core/capture.js';
 import * as queue from './core/queue.js';
+import type { ScrubContext } from './core/scrub.js';
 import type { Breadcrumb, ErrorContext, ErrorLevel, InitConfig, QueueStatus } from './types.js';
 
 const DEFAULT_MAX_QUEUE = 100;
@@ -91,12 +92,26 @@ export function initErrorReporter(config: InitConfig): void {
     void flush();
   });
 
-  // Send whatever was reported before init instead of losing it.
+  // Send whatever was reported before init instead of losing it. The config
+  // captured here is used on purpose: a `shutdown()` racing the drain must
+  // not send those events back to the pre-init buffer.
   const pending = pendingBeforeInit;
   pendingBeforeInit = [];
   for (const p of pending) {
-    void reportError(p.err, p.context, p.level);
+    void deliver(p.err, p.context, p.level, cfg, state.scrubCtx);
   }
+}
+
+/** Build and send one event with an explicit config. */
+async function deliver(
+  err: unknown,
+  context: ErrorContext | undefined,
+  level: ErrorLevel,
+  config: InitConfig,
+  scrubCtx: ScrubContext,
+): Promise<void> {
+  const event = buildEvent(config, scrubCtx, err, context, level);
+  await send(event, config);
 }
 
 /**
@@ -123,7 +138,6 @@ export async function reportError(
   const event = buildEvent(state.config, state.scrubCtx, err, context, level);
   await send(event, state.config);
 }
-
 /** Add/overrides keys in the user context attached to every report from now on. */
 export function setUserContext(partial: Record<string, unknown> | undefined): void {
   const state = getState();

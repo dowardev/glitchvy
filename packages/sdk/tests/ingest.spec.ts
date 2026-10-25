@@ -59,11 +59,9 @@ describe('toIngestPayload', () => {
   it('never sends camelCase keys', () => {
     const payload = toIngestPayload(makeEvent({ context: { entityType: 'x', entityId: 1 } }));
     const keys = Object.keys(payload);
-    expect(keys).not.toContain('eventId');
-    expect(keys).not.toContain('appVersion');
-    expect(keys).not.toContain('userAgent');
-    expect(keys).not.toContain('error_name_x');
-    expect(keys).not.toContain('entityType');
+    for (const camelKey of ['eventId', 'appVersion', 'userAgent', 'entityType', 'error', 'context', 'user']) {
+      expect(keys).not.toContain(camelKey);
+    }
   });
 
   it('keeps error_message non-empty (the backend rejects empty strings)', () => {
@@ -87,12 +85,14 @@ describe('toIngestPayload', () => {
     const payload = toIngestPayload(
       makeEvent({
         appVersion: 'v'.repeat(80),
+        environment: 'e'.repeat(80),
         route: '/'.repeat(300),
         error: { name: 'E'.repeat(300), message: 'boom', type: 'T'.repeat(300) },
         context: { entityType: 'x'.repeat(200), operation: 'y'.repeat(200) },
       }),
     );
     expect(payload.app_version).toHaveLength(50);
+    expect(payload.environment).toHaveLength(50);
     expect(payload.route).toHaveLength(255);
     expect(payload.error_name).toHaveLength(255);
     expect(payload.error_type).toHaveLength(255);
