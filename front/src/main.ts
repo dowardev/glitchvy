@@ -1,17 +1,22 @@
-// SPDX-FileCopyrightText: 2026 DowarDev
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2024 Glitchvy
 
-import { createApp } from 'vue';
-import { createPinia } from 'pinia';
+import { createApp } from 'vue'
+import { createPinia } from 'pinia'
+import App from './App.vue'
+import { router } from './router';
+
 import { IonicVue } from '@ionic/vue';
 
-/* Core Ionic CSS */
+/* Core CSS required for Ionic components to work properly */
 import '@ionic/vue/css/core.css';
+
+/* Basic CSS for apps built with Ionic */
 import '@ionic/vue/css/normalize.css';
 import '@ionic/vue/css/structure.css';
 import '@ionic/vue/css/typography.css';
 
-/* Utilities */
+/* Optional CSS utils that can be commented out */
 import '@ionic/vue/css/padding.css';
 import '@ionic/vue/css/float-elements.css';
 import '@ionic/vue/css/text-alignment.css';
@@ -19,14 +24,24 @@ import '@ionic/vue/css/text-transformation.css';
 import '@ionic/vue/css/flex-utils.css';
 import '@ionic/vue/css/display.css';
 
-import App from './App.vue';
-import { router } from './router.js';
+/**
+ * Ionic Dark Mode
+ * -----------------------------------------------------
+ * For more info, please see:
+ * https://ionicframework.com/docs/theming/dark-mode
+ */
 
-const app = createApp(App);
+/* @import '@ionic/vue/css/palettes/dark.always.css'; */
+/* @import '@ionic/vue/css/palettes/dark.class.css'; */
+import '@ionic/vue/css/palettes/dark.system.css';
 
-app.use(createPinia());
-app.use(IonicVue);
-app.use(router);
+/* Theme variables */
+import './theme/variables.css';
+
+const app = createApp(App)
+  .use(createPinia())
+  .use(IonicVue)
+  .use(router);
 
 router.isReady().then(() => {
   app.mount('#app');

@@ -2,98 +2,65 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 
 <template>
-  <ion-card
-    button
-    @click="emit('open', report.id)"
-    :data-testid="`error-${report.id}`"
-  >
-    <ion-card-header>
-      <ion-card-subtitle>
-        <ion-badge :color="levelBadge(report.level)">{{ report.level }}</ion-badge>
-        <ion-badge
-          :color="statusBadge(report.status)"
-          class="status-badge"
-          data-testid="status-badge"
-        >
-          {{ report.status }}
-        </ion-badge>
-        <span class="error-name" data-testid="error-name">{{ report.error_name }}</span>
-      </ion-card-subtitle>
-      <ion-card-title data-testid="error-message">{{ report.error_message }}</ion-card-title>
-    </ion-card-header>
-    <ion-card-content>
+  <ion-item button @click="navigateToDetail">
+    <ion-label>
+      <h2>{{ error.message }}</h2>
+      <p>{{ error.type }}</p>
       <p>
-        {{ report.environment }} · v{{ report.app_version }} · {{ report.created_at }}
+        <ion-badge :color="levelColor" class="ion-margin-end">{{ error.level }}</ion-badge>
+        <ion-badge :color="statusColor">{{ error.status }}</ion-badge>
+        <ion-text color="medium" class="ion-margin-start">
+          {{ error.count }} ocurrencias · visto {{ formatDate(error.last_seen_at) }}
+        </ion-text>
       </p>
-      <p v-if="report.entity_type">
-        {{ report.entity_type }}#{{ report.entity_id ?? '?' }}
-        <template v-if="report.operation">· {{ report.operation }}</template>
-      </p>
-    </ion-card-content>
-  </ion-card>
+    </ion-label>
+  </ion-item>
 </template>
 
 <script setup lang="ts">
-import {
-  IonCard,
-  IonCardHeader,
-  IonCardTitle,
-  IonCardSubtitle,
-  IonCardContent,
-  IonBadge,
-} from '@ionic/vue';
-import type { Level, Status } from '../types.js';
+import { IonBadge, IonItem, IonLabel, IonText, useIonRouter } from '@ionic/vue';
+import { computed } from 'vue';
+import type { ErrorReportSummary } from '@/types';
 
-defineProps<{
-  report: {
-    id: number;
-    level: Level;
-    status: Status;
-    error_name: string;
-    error_message: string;
-    environment: string;
-    app_version: string;
-    created_at: string | null;
-    entity_type: string | null;
-    entity_id: string | null;
-    operation: string | null;
-  };
-}>();
+interface Props {
+  error: ErrorReportSummary;
+}
 
-const emit = defineEmits<{ open: [id: number] }>();
+const props = defineProps<Props>();
+const ionRouter = useIonRouter();
 
-function levelBadge(level: Level): string {
-  switch (level) {
+const levelColor = computed(() => {
+  switch (props.error.level) {
+    case 'critical':
     case 'error':
       return 'danger';
-    case 'warn':
+    case 'warning':
       return 'warning';
     case 'info':
       return 'primary';
-  }
-}
-
-function statusBadge(status: Status): string {
-  switch (status) {
-    case 'open':
+    default:
       return 'medium';
-    case 'triaged':
-      return 'tertiary';
+  }
+});
+
+const statusColor = computed(() => {
+  switch (props.error.status) {
+    case 'open':
+      return 'danger';
+    case 'in_progress':
+      return 'warning';
     case 'resolved':
       return 'success';
-    case 'closed':
-      return 'dark';
+    default:
+      return 'medium';
   }
+});
+
+function formatDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleString();
+}
+
+function navigateToDetail(): void {
+  ionRouter.push(`/errors/${props.error.id}`);
 }
 </script>
-
-<style scoped>
-.status-badge {
-  margin-left: 4px;
-  margin-right: 4px;
-}
-.error-name {
-  margin-left: 6px;
-  font-weight: 500;
-}
-</style>

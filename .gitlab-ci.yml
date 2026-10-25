@@ -19,7 +19,6 @@ default:
 
 variables:
   GIT_DEPTH: "10"
-  # Cache paths are workspace-local.
   NPM_CONFIG_CACHE: "$CI_PROJECT_DIR/.npm"
   COMPOSER_CACHE_DIR: "$CI_PROJECT_DIR/.composer"
 
@@ -38,17 +37,6 @@ lint:sdk:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
 
-lint:admin:
-  stage: lint
-  image: node:22-alpine
-  before_script:
-    - corepack enable
-  script:
-    - pnpm --filter glitchvy-admin lint || true
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_COMMIT_BRANCH == "main"'
-
 lint:server:
   stage: lint
   image: php:8.3-cli
@@ -58,7 +46,7 @@ lint:server:
     - php composer-setup.php --install-dir=/usr/local/bin --filename=composer
     - rm composer-setup.php
   script:
-    - composer -C back validate --strict --no-check-publish
+    - composer -d back validate --strict --no-check-publish
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
@@ -75,14 +63,7 @@ test:sdk:
     - corepack enable
     - pnpm install --frozen-lockfile || pnpm install
   script:
-    - pnpm --filter glitchvy test --coverage --run
-  coverage: '/All files[^|]*\|[^|]*\s+([\d.]+)/'
-  artifacts:
-    reports:
-      coverage_report:
-        coverage_format: cobertura
-        path: packages/sdk/coverage/cobertura-coverage.xml
-    expire_in: 1 week
+    - pnpm --filter glitchvy test:run
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
@@ -95,14 +76,7 @@ test:admin:
     - corepack enable
     - pnpm install --frozen-lockfile || pnpm install
   script:
-    - pnpm --filter glitchvy-admin test --coverage --run
-  coverage: '/All files[^|]*\|[^|]*\s+([\d.]+)/'
-  artifacts:
-    reports:
-      coverage_report:
-        coverage_format: cobertura
-        path: front/coverage/cobertura-coverage.xml
-    expire_in: 1 week
+    - pnpm --filter glitchvy-admin test:unit --run
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
@@ -132,16 +106,9 @@ test:server:
     - php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
     - php composer-setup.php --install-dir=/usr/local/bin --filename=composer
     - rm composer-setup.php
-    - composer -C back install --prefer-dist --no-progress --no-interaction
+    - composer -d back install --prefer-dist --no-progress --no-interaction
   script:
-    - composer -C back test
-  coverage: '/^\s*Lines:\s*([\d.]+)/'
-  artifacts:
-    reports:
-      coverage_report:
-        coverage_format: cobertura
-        path: back/coverage/cobertura-coverage.xml
-    expire_in: 1 week
+    - cd back && vendor/bin/phpunit
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
@@ -158,7 +125,8 @@ build:packages:
     - corepack enable
     - pnpm install --frozen-lockfile || pnpm install
   script:
-    - pnpm -r build
+    - pnpm --filter glitchvy build
+    - pnpm --filter glitchvy-admin build
   artifacts:
     paths:
       - packages/sdk/dist

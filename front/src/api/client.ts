@@ -1,145 +1,166 @@
 // SPDX-FileCopyrightText: 2026 DowarDev
 // SPDX-License-Identifier: AGPL-3.0-only
 
-/**
- * Type-safe API client for the glitchvy-laravel admin endpoints.
- *
- * Auth: every admin request carries `X-Glitchvy-User-Token`. The Laravel SDK
- * resolves that token against the consumer app's guard (Sanctum, session, …).
- */
-
 import type {
+  Status,
+  ErrorReportSummary,
+  ErrorReportDetail,
   CursorPage,
   ErrorFilters,
-  ErrorReportDetail,
-  ErrorReportSummary,
-  Status,
-} from '../types.js';
+  Project,
+  ApiKey,
+  CreateProjectRequest,
+  CreateApiKeyRequest,
+  CreateApiKeyResponse,
+  LoginRequest,
+  LoginResponse,
+  User,
+  GlitchvyApiError,
+} from '@/types';
 
-const DEFAULT_BASE_URL = '/api/glitchvy';
+// The Vite dev server proxies the whole /api tree to Laravel, so the
+// base is just /api and each call spells out its full path.
+const API_BASE = import.meta.env.VITE_GLITCHVY_API_URL || '/api'
 
-let cachedBaseUrl: string | null = null;
-
-export function setBaseUrl(url: string): void {
-  /** Test helper / runtime override. */
-  cachedBaseUrl = url;
-}
-
-function readBaseUrl(): string {
-  if (cachedBaseUrl !== null) return cachedBaseUrl;
-  const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
-  const fromEnv = env?.VITE_GLITCHVY_API_URL;
-  cachedBaseUrl = typeof fromEnv === 'string' && fromEnv.length > 0 ? fromEnv : DEFAULT_BASE_URL;
-  return cachedBaseUrl;
-}
-
-function absoluteUrl(path: string): string {
-  const base = readBaseUrl().replace(/\/$/, '');
-  return `${base}/${path.replace(/^\//, '')}`;
-}
-
-export class GlitchvyApiError extends Error {
-  public readonly status: number;
-  public readonly code: string;
+class GlitchvyApiErrorImpl extends Error {
+  public readonly status: number
+  public readonly code: string
 
   constructor(status: number, code: string, message: string) {
-    super(message);
-    this.name = 'GlitchvyApiError';
-    this.status = status;
-    this.code = code;
+    super(message)
+    this.name = 'GlitchvyApiError'
+    this.status = status
+    this.code = code
   }
 }
 
-interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
-  token?: string | null;
-  body?: unknown;
-  headers?: Record<string, string>;
+function isGlitchvyApiError(error: unknown): error is GlitchvyApiErrorImpl {
+  return error instanceof GlitchvyApiErrorImpl
 }
 
-async function call<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const { token = null, body, headers = {}, method = 'GET' } = opts;
-  const finalHeaders: Record<string, string> = {
-    Accept: 'application/json',
-    ...headers,
-  };
-  if (body !== undefined && !finalHeaders['Content-Type']) {
-    finalHeaders['Content-Type'] = 'application/json';
+async function request<T>(
+  endpoint: string,
+  options: RequestInit = {},
+  token?: string
+): Promise<T> {
+  const url = `${API_BASE}${endpoint}`
+  const headers: HeadersInit = {
+    'Accept': 'application/json',
+    'Content-Type': 'application/json',
+    'X-Requested-With': 'XMLHttpRequest',
+    ...options.headers,
   }
+
   if (token) {
-    finalHeaders['X-Glitchvy-User-Token'] = token;
+    ;(headers as Record<string, string>)['Authorization'] = `Bearer ${token}`
   }
 
-  const res = await fetch(absoluteUrl(path), {
-    method,
-    headers: finalHeaders,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const detail = await safeReadErrorBody(res);
-    throw new GlitchvyApiError(
-      res.status,
-      detail.error ?? 'http_error',
-      detail.message ?? res.statusText,
-    );
-  }
-
-  // 204 No Content short-circuit.
-  if (res.status === 204) return undefined as T;
-
-  return (await res.json()) as T;
-}
-
-async function safeReadErrorBody(res: Response): Promise<{ error?: string; message?: string }> {
+  let response: Response
   try {
-    const j = (await res.json()) as { error?: string; message?: string };
-    return j;
+    response = await fetch(url, {
+      ...options,
+      headers,
+      credentials: 'include',
+    })
   } catch {
-    return { message: res.statusText };
+    // fetch() rejects when the proxy target is unreachable (e.g. the
+    // Laravel backend is not running) or the browser is offline. Surface
+    // it as a 0-status GlitchvyApiError so the UI can show a single
+    // "cannot reach the server" message instead of an unhandled TypeError.
+    throw new GlitchvyApiErrorImpl(0, 'NETWORK_UNREACHABLE', 'No se puede conectar al servidor')
   }
+
+  if (!response.ok) {
+    let code = 'UNKNOWN_ERROR'
+    let message = response.statusText
+    try {
+      const errorData = await response.json()
+      code = errorData.code || code
+      message = errorData.message || message
+    } catch {
+      // Ignore JSON parse errors
+    }
+    throw new GlitchvyApiErrorImpl(response.status, code, message)
+  }
+
+  if (response.status === 204) {
+    return undefined as T
+  }
+
+  return response.json()
 }
 
 export const api = {
-  async listErrors(
-    filters: ErrorFilters,
-    token: string | null,
-  ): Promise<CursorPage<ErrorReportSummary>> {
-    const params = new URLSearchParams();
-    for (const [k, v] of Object.entries(filters)) {
-      if (v !== undefined && v !== null && v !== '') {
-        params.set(k, String(v));
-      }
-    }
-    const qs = params.toString();
-    return call<CursorPage<ErrorReportSummary>>(`errors${qs ? `?${qs}` : ''}`, {
-      method: 'GET',
-      token,
-    });
+  // Auth: /api/auth/*
+  async login(credentials: LoginRequest): Promise<LoginResponse> {
+    return request<LoginResponse>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(credentials),
+    })
   },
 
-  async getError(id: number, token: string | null): Promise<ErrorReportDetail> {
-    const wrapped = await call<{ data: ErrorReportDetail }>(`errors/${id}`, {
-      method: 'GET',
-      token,
-    });
-    return wrapped.data;
+  async logout(token: string): Promise<void> {
+    return request<void>('/auth/logout', {
+      method: 'POST',
+    }, token)
   },
 
-  async updateStatus(
-    id: number,
-    status: Status,
-    token: string | null,
-  ): Promise<ErrorReportSummary> {
-    const wrapped = await call<{ data: ErrorReportSummary }>(
-      `errors/${id}/status`,
-      { method: 'PATCH', body: { status }, token },
-    );
-    return wrapped.data;
+  async getMe(token: string): Promise<User> {
+    return request<User>('/auth/me', {}, token)
   },
 
-  /** Returns the URL the admin can drop into <img src=…> for a screenshot. */
+  // Projects: /api/projects/*
+  async listProjects(token: string): Promise<Project[]> {
+    return request<Project[]>('/projects', {}, token)
+  },
+
+  async createProject(data: CreateProjectRequest, token: string): Promise<Project> {
+    return request<Project>('/projects', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }, token)
+  },
+
+  async listApiKeys(projectId: number, token: string): Promise<ApiKey[]> {
+    return request<ApiKey[]>(`/projects/${projectId}/api-keys`, {}, token)
+  },
+
+  async createApiKey(projectId: number, data: CreateApiKeyRequest, token: string): Promise<CreateApiKeyResponse> {
+    return request<CreateApiKeyResponse>(`/projects/${projectId}/api-keys`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }, token)
+  },
+
+  // Errors (admin view): /api/glitchvy/errors/*
+  async listErrors(filters: ErrorFilters = {}, token: string): Promise<CursorPage<ErrorReportSummary>> {
+    const params = new URLSearchParams()
+    if (filters.level) params.set('level', filters.level)
+    if (filters.status) params.set('status', filters.status)
+    if (filters.search) params.set('search', filters.search)
+    if (filters.project_id) params.set('project_id', String(filters.project_id))
+    if (filters.cursor) params.set('cursor', filters.cursor)
+    if (filters.limit) params.set('limit', String(filters.limit))
+
+    const query = params.toString()
+    const endpoint = `/glitchvy/errors${query ? `?${query}` : ''}`
+    return request<CursorPage<ErrorReportSummary>>(endpoint, {}, token)
+  },
+
+  async getError(id: number, token: string): Promise<ErrorReportDetail> {
+    return request<ErrorReportDetail>(`/glitchvy/errors/${id}`, {}, token)
+  },
+
+  async updateStatus(id: number, status: Status, token: string): Promise<ErrorReportSummary> {
+    return request<ErrorReportSummary>(`/glitchvy/errors/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    }, token)
+  },
+
   screenshotUrl(id: number): string {
-    return absoluteUrl(`errors/${id}/screenshot`);
+    return `${API_BASE}/glitchvy/errors/${id}/screenshot`
   },
-};
+}
+
+export { GlitchvyApiErrorImpl as GlitchvyApiError, isGlitchvyApiError }

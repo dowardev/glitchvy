@@ -1,67 +1,174 @@
-# `glitchvy-admin`
+# Glitchvy Admin Frontend
 
-> Vue 3 + Ionic SPA dashboard for the [`glitchvy-server`](../back) admin endpoints. Mobile-first, single-page, framework-light.
->
-> Source lives in `front/`.
+Frontend Ionic Vue 3 application for Glitchvy error reporting SaaS.
 
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+## Tech Stack
 
-## What it does
+- **Framework**: Ionic 9 + Vue 3 + Vite
+- **State Management**: Pinia
+- **Routing**: Vue Router 5 (via @ionic/vue-router)
+- **Testing**: Vitest + @vue/test-utils + jsdom
+- **Package Manager**: pnpm
 
-The dev's window into errors reported by the consumer app:
+## Requirements
 
-- **Login** with an admin token (your Laravel app issues it via its auth guard; the admin sends it back as `X-Glitchvy-User-Token`).
-- **Error list** with filters (level, status, free-text search) and cursor pagination.
-- **Error detail** with stack, breadcrumbs, screenshots, and status workflow (open → triaged → resolved → closed).
-- **Mobile-first** via Ionic — same UI on phone or laptop.
+- Node.js 20+
+- pnpm 9+
+- Ionic CLI 7+ (`npm install -g @ionic/cli`)
 
-## Install & run (v0.x, dev mode)
+## Getting Started
+
+### Installation
 
 ```bash
-# From the monorepo root
+cd front
 pnpm install
-pnpm --filter glitchvy-admin dev
 ```
 
-Open http://localhost:5174.
+### Development
 
-## Build
+Start the Ionic dev server (recommended):
 
 ```bash
-pnpm --filter glitchvy-admin build
-# output: front/dist/  (static SPA — host it on any HTTP server)
+ionic s
+# or
+npx ionic serve
 ```
 
-## Environment
+This starts the server on port **8100** (Ionic default).
 
-The admin reads two env vars at build time (Vite injects them as `import.meta.env.VITE_*`):
-
-| Var | Default | Meaning |
-|---|---|---|
-| `VITE_GLITCHVY_API_URL` | `/api/glitchvy` | Base path the admin hits. Absolute in production (`https://your-app.example.com/api/glitchvy`). |
-| `VITE_GLITCHVY_PROXY_TARGET` | `http://localhost:8000` | Local dev — Vite proxies `/api/glitchvy/*` to this Laravel server. |
-
-> The token you enter in the login form is also stored in `localStorage` under `glitchvy-admin-token`. The admin SPA forwards it on every API request as `X-Glitchvy-User-Token`.
-
-## Tests
+Alternatively, use Vite directly:
 
 ```bash
-pnpm --filter glitchvy-admin test:run
-pnpm --filter glitchvy-admin test:coverage
+pnpm dev
 ```
 
-The package is tested at the **state + boundary** level (Pinia stores + HTTP wrapper). Vue components are exercised manually + via the CI smoke flow; we don't measure coverage on `.vue` files because Ionic component markup inflates LOC without adding logic. Documented in `vitest.config.ts`.
+### Environment Variables
 
-## Stack
+Copy `.env.example` to `.env.local`:
 
-- Vue 3 (Composition API) + TypeScript 5.x
-- Ionic Vue 8
-- Vue Router 4 (via `@ionic/vue-router`)
-- Pinia 2 (state)
-- Vite 5 (build)
+```bash
+cp .env.example .env.local
+```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VITE_GLITCHVY_API_URL` | `/api/glitchvy` | API base path (proxied in dev) |
+| `VITE_GLITCHVY_PROXY_TARGET` | `http://localhost:8000` | Laravel backend URL for Vite proxy |
+
+### Building
+
+```bash
+pnpm build
+```
+
+Outputs to `dist/`.
+
+### Testing
+
+```bash
+# Run tests
+pnpm test
+
+# Run tests with coverage
+pnpm test:coverage
+```
+
+### Linting
+
+```bash
+pnpm lint
+```
+
+## Project Structure
+
+```
+front/
+├── src/
+│   ├── api/
+│   │   └── client.ts          # Typed HTTP client for Glitchvy API
+│   ├── components/
+│   │   ├── ErrorListItem.vue  # Error card with badges
+│   │   ├── ErrorFilters.vue   # Filter controls (level, status, search)
+│   │   ├── ScreenshotViewer.vue # Screenshot fetch + fullscreen modal
+│   │   ├── ProjectCreateModal.vue # Create project modal
+│   │   └── ApiKeyCreateModal.vue  # Create API key modal with plaintext display
+│   ├── stores/
+│   │   ├── auth.ts            # Auth state (user, login, logout, fetchMe)
+│   │   ├── projects.ts        # Projects list, create, API keys
+│   │   └── errors.ts          # Errors list, detail, filters, pagination, status workflow
+│   ├── views/
+│   │   ├── LoginView.vue      # Email/password login → /projects
+│   │   ├── ProjectListView.vue # Project list + create modal + logout
+│   │   ├── ProjectDetailView.vue # Project info, API keys, errors tab
+│   │   ├── ErrorListView.vue  # Error list with filters + pagination
+│   │   └── ErrorDetailView.vue # Stack trace, breadcrumbs, context, tags, screenshots, status workflow
+│   ├── types.ts               # TypeScript types for API contracts
+│   ├── router/index.ts        # Routes + auth guard
+│   ├── main.ts                # App bootstrap (Pinia, IonicVue, Router)
+│   ├── App.vue                # Root component
+│   └── theme/variables.css    # Ionic CSS variables
+├── tests/
+│   ├── setup.ts               # Vitest setup (JSDOM, mocks)
+│   ├── api.spec.ts            # API client tests
+│   ├── auth-store.spec.ts     # Auth store tests
+│   ├── errors-store.spec.ts   # Errors store tests
+│   └── projects-store.spec.ts # Projects store tests
+├── ionic.config.json          # Ionic project config
+├── vite.config.ts             # Vite config + proxy + test config
+├── tsconfig.json              # TypeScript config
+├── package.json
+├── .env.example
+├── .gitignore
+└── README.md
+```
+
+## Key Features
+
+### Authentication
+- Laravel Sanctum compatible (cookies + CSRF)
+- `credentials: 'include'` on all requests
+- `Accept: application/json` + `X-Requested-With: XMLHttpRequest` headers
+- User persisted in localStorage (no token stored)
+
+### Error Management
+- Paginated error list with cursor-based pagination
+- Filters: level, status, search, project
+- Detail view: stack trace, breadcrumbs, context, tags, screenshots
+- Status workflow: open → in_progress → resolved / ignored
+
+### Projects & API Keys
+- Project CRUD
+- API key generation with one-time plaintext display
+- Copy to clipboard support
+
+## API Integration
+
+The frontend expects a Laravel backend with these endpoints:
+
+```
+POST   /api/glitchvy/login           # Login (Sanctum)
+POST   /api/glitchvy/logout          # Logout
+GET    /api/glitchvy/me              # Current user
+GET    /api/glitchvy/projects        # List projects
+POST   /api/glitchvy/projects        # Create project
+POST   /api/glitchvy/projects/{id}/api-keys # Create API key
+GET    /api/glitchvy/errors          # List errors (with filters)
+GET    /api/glitchvy/errors/{id}     # Error detail
+PATCH  /api/glitchvy/errors/{id}/status # Update status
+GET    /api/glitchvy/errors/{id}/screenshot # Screenshot download
+```
+
+## Ionic CLI vs Vite
+
+**Use `ionic serve`** for development — it:
+- Runs Vite internally
+- Provides live reload
+- Handles Ionic-specific features
+- Uses port 8100 by default
+
+**Use `pnpm dev`** only if you need direct Vite control (port 5174).
 
 ## License
 
-GNU Affero General Public License v3.0 (`AGPL-3.0-only`). See [LICENSE](../../LICENSE).
-
-Copyright (C) 2026 DowarDev. SPDX-License-Identifier: AGPL-3.0-only.
+MIT

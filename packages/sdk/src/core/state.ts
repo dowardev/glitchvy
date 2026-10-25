@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * Singleton module-scoped state. The SDK is process-singleton (one initializer
- * per app instance). Exposed for tests; tests reset via {@link resetState}.
+ * Singleton module-scoped state. The SDK is process-singleton (one
+ * initializer per app instance). Exposed for tests; tests reset via
+ * {@link resetState}.
  */
 
 import type { Breadcrumb, InitConfig } from '../types.js';

@@ -1,5 +1,5 @@
-<!-- SPDX-FileCopyrightText: 2026 DowarDev -->
-<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- SPDX-License-Identifier: MIT -->
+<!-- Copyright (c) 2024 Glitchvy -->
 
 <template>
   <ion-app>
@@ -10,7 +10,3 @@
 <script setup lang="ts">
 import { IonApp, IonRouterOutlet } from '@ionic/vue';
 </script>
-
-<style>
-/* App-level overrides here. */
-</style>

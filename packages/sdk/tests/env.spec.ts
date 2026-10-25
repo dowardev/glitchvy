@@ -9,7 +9,7 @@ describe('env', () => {
     expect(readPlatform()).toBe('web');
   });
 
-  it('readRoute() returns the browser pathname', () => {
+  it('readRoute() returns a string starting with "/"', () => {
     expect(readRoute()).toMatch(/^\//);
   });
 
@@ -19,9 +19,8 @@ describe('env', () => {
     expect(ua.length).toBeGreaterThan(0);
   });
 
-  it('readRoute() is SSR-safe (no window) — verified by isolated jsdom stub', () => {
+  it('readRoute() is SSR-safe (returns "/" without window)', () => {
     const originalWindow = (globalThis as Record<string, unknown>)['window'];
-    // We simulate SSR by hiding window temporarily.
     (globalThis as Record<string, unknown>)['window'] = undefined;
     try {
       expect(readRoute()).toBe('/');

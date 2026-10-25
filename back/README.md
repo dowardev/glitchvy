@@ -1,168 +1,137 @@
-# `glitchvy/glitchvy-server`
+# Glitchvy Server
 
-> Server SDK for the [`glitchvy`](../packages/sdk) error reporter. Provides the ingestion endpoint, data layer, admin JSON API, and artisan commands for your Laravel 11+ / 12 app.
->
-> Composer name: `glitchvy/glitchvy-server`. Source lives in `back/`.
+Sentry-like error reporting SaaS server built with Laravel 13+. Multi-tenant, API-key authenticated, with admin dashboard endpoints.
 
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+## Features
 
-## What it does
+- **Multi-tenant**: Projects isolated by API keys
+- **Error ingestion**: REST API for error reports with rich metadata
+- **Screenshot support**: Upload and serve error screenshots
+- **Admin API**: Sanctum-authenticated endpoints for project/key/error management
+- **CLI commands**: Project creation, API key generation, error pruning
+- **Events**: `ErrorReported` event dispatched on new errors
+- **Soft deletes + pruning**: Configurable retention with `glitchvy:prune`
 
-You install this in your Laravel backend, run the migrations, set a key, and your server now has:
+## Requirements
 
-- `POST /api/glitchvy/errors` — Bearer API key, called by the SDK (the end user's tap on "Reportar este error").
-- `POST /api/glitchvy/errors/{id}/screenshot` — multipart upload, Bearer API key.
-- `GET /api/glitchvy/errors`, `GET /errors/{id}`, `PATCH /errors/{id}/status` — JSON API for the [`glitchvy-admin` SPA](../front); auth via `X-Glitchvy-User-Token` proxied through your app's normal auth guard.
-- `GET /api/glitchvy/errors/{id}/screenshot` — authenticated binary stream (screenshots stored on the **private** disk; never exposed via public URLs).
-- `Glitchvy\Events\ErrorReported` — fires on every persisted report so your app can wire alerting, Slack, etc.
-- `php artisan glitchvy:prune --days=N` — retention sweep.
-- `php artisan glitchvy:key [--rotate]` — generate / rotate the API key.
+- PHP 8.3+
+- Composer
+- SQLite (default) or MySQL/PostgreSQL
 
-## Install (v0.x, via git+https)
-
-```bash
-composer require "glitchvy/glitchvy-server" \
-  --repository='{"type":"vcs","url":"https://gitlab.com/dowardev/glitchvy.git"}'
-```
-
-The service provider is auto-discovered.
-
-## Setup
+## Installation
 
 ```bash
-# 1. Publish config (optional — defaults are fine for most apps)
-php artisan vendor:publish --tag=glitchvy-config
-
-# 2. Run the package migrations
+cd back
+composer install
+cp .env.example .env
+php artisan key:generate
 php artisan migrate
-
-# 3. Generate an API key (writes to .env as GLITCHVY_API_KEY)
-php artisan glitchvy:key
+php artisan db:seed  # creates admin@glitchvy.app user
 ```
-
-Then in your consumer app:
-
-```ts
-import { initErrorReporter } from 'glitchvy';
-
-initErrorReporter({
-  ingestionUrl: '/api/glitchvy/errors',
-  apiKey: import.meta.env.VITE_GLITCHVY_API_KEY,
-  appVersion: '0.78.0',
-  environment: 'production',
-});
-```
-
-For local dev, both processes run side-by-side: your SPA at `:5173` (Vite) and your backend at `:8000` (Laravel). Configure a Vite proxy in `vite.config.ts` or let the SDK call the absolute URL.
 
 ## Configuration
 
-The full `config/glitchvy.php`:
+Key environment variables (see `.env.example`):
 
-```php
-return [
-  'api_key' => env('GLITCHVY_API_KEY'),                    // required; set by `glitchvy:key`
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DB_CONNECTION` | Database driver | `sqlite` |
+| `DB_DATABASE` | Database path | `database/database.sqlite` |
+| `GLITCHVY_RETENTION_DAYS` | Days before pruning soft-deleted errors | `30` |
+| `GLITCHVY_STORAGE_DISK` | Filesystem disk for screenshots | `private` |
+| `GLITCHVY_RATE_LIMIT` | Rate limit for API endpoints | `60,1` |
 
-  'routes' => [
-    'prefix' => env('GLITCHVY_ROUTES_PREFIX', 'api/glitchvy'),
-    'allowed_origins' => [...],                            // CORS allowlist; empty disables
-  ],
+The `private` disk points to `storage/app/private` and is not publicly accessible.
 
-  'rate_limit' => ['per_minute' => env('GLITCHVY_RATE_LIMIT_PER_MINUTE', 5)],
+## Running
 
-  'retention_days' => env('GLITCHVY_RETENTION_DAYS', 30),
-
-  'storage_disk' => env('GLITCHVY_STORAGE_DISK', 'private'),
-
-  'admin_guard' => env('GLITCHVY_ADMIN_GUARD', 'web'),     // Sanctum, Passport, custom
-
-  'user' => [
-    'table' => env('GLITCHVY_USER_TABLE', 'users'),         // resolved by AuthenticateUserToken
-    'token_column' => env('GLITCHVY_USER_TOKEN_COLUMN', 'remember_token'),
-  ],
-];
+```bash
+php artisan serve
+# Server runs on http://localhost:8000
 ```
 
-### Storage disk — `private` by default
+## API Endpoints
 
-Screenshots are uploaded via `POST /errors/{id}/screenshot` and stored on the `private` filesystem disk (configurable). The admin SPA streams them through `GET /errors/{id}/screenshot` **after auth**, never via a public URL. If you switch this to `public` for self-hosted deployments, you take responsibility for restricting access at the HTTP layer.
+### Ingestion (API Key Auth)
 
-### Rate limiting
+All ingestion endpoints require `Authorization: Bearer <api_key>` header.
 
-The ingestion endpoint is capped at `5 req/min/IP` by default. The admin SPA endpoints are not throttled here — apply your own middleware if you expose them publicly.
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/glitchvy/errors` | Create error report |
+| `POST` | `/api/glitchvy/errors/{id}/screenshot` | Upload screenshot |
 
-## Endpoints
-
-| Verb | Path | Auth | Used by |
-|---|---|---|---|
-| `POST`   | `/api/glitchvy/errors`                       | `Bearer $GLITCHVY_API_KEY`         | Consumer SDK |
-| `POST`   | `/api/glitchvy/errors/{id}/screenshot`       | `Bearer $GLITCHVY_API_KEY`         | Future SDK helper |
-| `GET`    | `/api/glitchvy/errors`                       | `X-Glitchvy-User-Token`            | Admin SPA |
-| `GET`    | `/api/glitchvy/errors/{id}`                  | `X-Glitchvy-User-Token`            | Admin SPA |
-| `PATCH`  | `/api/glitchvy/errors/{id}/status`           | `X-Glitchvy-User-Token`            | Admin SPA |
-| `GET`    | `/api/glitchvy/errors/{id}/screenshot`       | `X-Glitchvy-User-Token`            | Admin SPA |
-
-> Sentry-compatible ingestion is **out of scope** for v0.x. The HTTP contract is glitchvy-specific.
-
-## Events
-
-```php
-namespace App\Listeners;
-
-use Glitchvy\Events\ErrorReported;
-
-class PingOnCallOnGlitchvyError
+**Error Report Payload:**
+```json
 {
-    public function handle(ErrorReported $event): void
-    {
-        $report = $event->errorReport;
-
-        // your alerting logic
-    }
+  "event_id": "uuid (optional)",
+  "app_version": "1.0.0",
+  "environment": "production",
+  "platform": "web",
+  "route": "/api/users",
+  "user_agent": "Mozilla/5.0...",
+  "level": "error",
+  "error_name": "ValidationException",
+  "error_message": "The email field is required.",
+  "error_type": "ValidationError",
+  "error_stack": "Stack trace...",
+  "entity_type": "user",
+  "entity_id": 123,
+  "operation": "create",
+  "tags": ["api", "validation"],
+  "data": {"field": "email"},
+  "user_id": 456,
+  "user_payload": {"id": 456, "email": "test@example.com"},
+  "breadcrumbs": [{"type": "navigation", "data": {"to": "/users"}}]
 }
 ```
 
-Wire it in `app/Providers/EventServiceProvider::$listen` (Laravel 11) or `bootstrap/app.php` (Laravel 12 style):
+### Admin (Sanctum Token Auth)
 
-```php
-use Glitchvy\Events\ErrorReported;
-use App\Listeners\PingOnCallOnGlitchvyError;
+Requires `Authorization: Bearer <sanctum_token>` from `/api/auth/login`.
 
-Event::listen(ErrorReported::class, PingOnCallOnGlitchvyError::class);
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/glitchvy/errors` | List errors (cursor paginated, filterable) |
+| `GET` | `/api/glitchvy/errors/{id}` | Show error with screenshots |
+| `PATCH` | `/api/glitchvy/errors/{id}/status` | Update status (open/triaged/resolved/closed) |
+| `GET` | `/api/glitchvy/errors/{id}/screenshot` | Download screenshot |
+| `GET` | `/api/projects` | List projects |
+| `POST` | `/api/projects` | Create project |
+| `POST` | `/api/projects/{id}/api-keys` | Create API key for project |
+| `POST` | `/api/auth/login` | Login, returns token |
+| `POST` | `/api/auth/logout` | Revoke current token |
+| `GET` | `/api/auth/me` | Current user |
+
+**Query parameters for `/api/glitchvy/errors`:**
+- `environment`, `status`, `level`, `project_id`, `search`, `per_page`
+
+## CLI Commands
+
+```bash
+# Create a project
+php artisan glitchvy:create-project --name="My App" --slug=my-app
+
+# Create an API key
+php artisan glitchvy:create-api-key --project=my-app --name="Production Key"
+
+# Prune old soft-deleted errors (dry run)
+php artisan glitchvy:prune --days=30 --dry-run
+
+# Actually prune
+php artisan glitchvy:prune --days=30
 ```
-
-> No bundled alerting exists. Implement your own listener per-project.
-
-## Status workflow
-
-`ErrorReport::$status` is constrained to the enum:
-
-```
-open → triaged → resolved → closed
-```
-
-The admin SPA drives transitions via `PATCH /errors/{id}/status`. Invalid transitions return 422 with the allowed list.
 
 ## Testing
 
 ```bash
-# from back/
-composer install
 vendor/bin/phpunit
+# or
+php artisan test
 ```
 
-The test suite uses [Orchestra Testbench](https://packages.tools/testbench) to spin up a minimal Laravel app in-memory with SQLite. Coverage > 70%.
-
-## Out of scope (v0.x)
-
-- Source maps. The client sends raw stacks.
-- Alerter implementations (wire your own `ErrorReported` listener).
-- Sentry-compatible ingestion endpoint.
-- Server SDKs for non-Laravel frameworks (Node, Django, etc.) — separate packages.
-- Public release to Packagist — install via `git+https` for v0.x.
+Tests use in-memory SQLite and Orchestra Testbench.
 
 ## License
 
-GNU Affero General Public License v3.0 (`AGPL-3.0-only`). See [LICENSE](../../LICENSE).
-
-Copyright (C) 2026 DowarDev. SPDX-License-Identifier: AGPL-3.0-only.
+AGPL-3.0-only

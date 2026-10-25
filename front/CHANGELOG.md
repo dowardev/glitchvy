@@ -1,0 +1,36 @@
+# Changelog
+
+All notable changes to `glitchvy-admin` are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+
+- Initial release of the Vue 3 + Ionic 9 admin SPA.
+- Login (Sanctum), project list, project detail with API keys, error list with level/status/search filters, and error detail.
+- Error status workflow: `open` → `in_progress` → `resolved`, plus `ignored`, changed from the detail view.
+- Error detail shows the stack trace, the breadcrumb trail, the captured context, the tags and any uploaded screenshots.
+- API key management: create a key, copy its plaintext once, and list the project's existing keys with their prefix and last-used timestamp.
+- Screenshot viewer with fullscreen and download.
+- Pinia stores for auth, projects and errors; a typed API client; Vue Router 5 with an auth guard.
+
+### Changed
+
+- The error status is edited through an `ion-select` rather than an `ion-segment`. A segment is a navigation control, not a control for changing a single value.
+- The admin SPA sticks to stock Ionic: no `<style>` blocks, only Ionic utility classes and components, and an inline style only where no Ionic utility exists (the dark backdrop behind a fullscreen screenshot).
+- The project configuration files match the `ionic start` output. The non-stock additions (`@vitejs/plugin-legacy`, `eslint`, `eslint-plugin-vue`, `@vue/eslint-config-typescript`, `cypress`, `terser`) and the `test:e2e` and `lint` scripts that referenced them were removed.
+
+### Fixed
+
+- The SPA could not navigate or read route parameters. `useRouter()` and `useRoute()` resolve to `undefined` inside a view rendered by the Ionic router outlet, because vue-router 5 resolves its injections from the `RouterView` component and the outlet renders the view outside that scope. A successful login left the page on `/login` with *"Cannot read properties of undefined (reading 'push')"*, and the error detail view threw *"Cannot read properties of undefined (reading 'params')"*. Navigation now goes through `useIonRouter()` and the route parameters arrive as props.
+- The Sanctum token is now persisted alongside the user and sent with every authenticated request. It was discarded at login, so every call after it went out unauthenticated.
+- The project list is a plain array again. The endpoint returned a cursor paginator, so the list rendered empty and creating a project failed inside the modal.
+- The API key listing was a stub that emptied the list without calling the API; it now loads the project's keys.
+- The build is green. `vue-tsc` rejected nine errors — `inset="true"` and `maxlength="100"` passing strings to boolean and number props, and an untyped router guard.
+
+## [0.0.0]
+
+> Not released.

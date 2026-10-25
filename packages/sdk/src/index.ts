@@ -2,10 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * Public API for the {@link https://gitlab.com/dowardev/glitchvy glitchvy} SDK.
- *
- * Intentionally tiny: the SDK is a *primitive* for the consumer app to wrap in
- * whatever UI the consumer wants. It does not ship any UI of its own.
+ * Public API for the glitchvy SDK. Framework-agnostic. The consumer wraps
+ * these primitives in their own UI; the SDK ships no UI of its own.
  */
 
 import {
@@ -54,17 +52,10 @@ function applyDefaults(config: InitConfig): InitConfig {
 
 /**
  * Bootstraps the SDK. Idempotent; safe to call once on app start.
- *
- * Side effects:
- *  - registers the active config + scrub context in module state
- *  - installs auto-capture hooks (configurable via {@link InitConfig.capture})
- *  - wires the `online` event to {@link flush}
  */
 export function initErrorReporter(config: InitConfig): void {
   if (initialized) {
-    // Re-init overwrites the config but does NOT re-install hooks (prevents
-    // stacking console.error wrappers). Most consumers call exactly once;
-    // a tiny minority (HMR, tests) call repeatedly.
+    // Re-init overwrites the config but does NOT re-install hooks.
     const state = getState();
     const cfg = applyDefaults(config);
     state.config = cfg;
@@ -79,7 +70,6 @@ export function initErrorReporter(config: InitConfig): void {
   state.scrubCtx = buildScrubContext(cfg.scrubRules);
 
   setReportCallback(async (err: unknown, ctx?: ErrorContext, level?: ErrorLevel) => {
-    // Forward to the public `reportError` so the wiring stays in one place.
     await reportError(err, ctx, level);
   });
 
@@ -93,10 +83,6 @@ export function initErrorReporter(config: InitConfig): void {
  *
  * Failures (server down, retry budget exhausted, etc.) queue the event in
  * IndexedDB and are flushed later — see {@link flush}.
- *
- * `level` defaults to `'error'`. Use `'warn'` or `'info'` for noisy paths
- * you'd still like to triage in the admin SPA without surfacing in the
- * critical feed.
  */
 export async function reportError(
   err: unknown,
@@ -114,10 +100,7 @@ export async function reportError(
   await send(event, state.config);
 }
 
-/**
- * Add/overrides keys in the user context attached to every report from now on.
- * Pass `undefined` to clear.
- */
+/** Add/overrides keys in the user context attached to every report from now on. */
 export function setUserContext(partial: Record<string, unknown> | undefined): void {
   const state = getState();
   if (partial === undefined) {
@@ -131,9 +114,7 @@ export function clearUserContext(): void {
   getState().user = {};
 }
 
-/**
- * Push a breadcrumb onto the trail. Reports carry the last 50 by default.
- */
+/** Push a breadcrumb onto the trail. Reports carry the last 50 by default. */
 export function addBreadcrumb(message: string, data?: Record<string, unknown>): void {
   if (typeof message !== 'string' || message.length === 0) return;
   const b: Breadcrumb = {
@@ -144,9 +125,7 @@ export function addBreadcrumb(message: string, data?: Record<string, unknown>): 
   pushBreadcrumb(b);
 }
 
-/**
- * Force-flush the offline queue. Safe to call repeatedly.
- */
+/** Force-flush the offline queue. Safe to call repeatedly. */
 export async function flush(): Promise<void> {
   const state = getState();
   if (!state.config) return;
@@ -163,8 +142,8 @@ export async function getQueueSize(): Promise<number> {
 }
 
 /**
- * Tear down auto-capture, reset state, clear the callback. Mostly useful for
- * tests and HMR. Production apps should not need to call this.
+ * Tear down auto-capture, reset state, clear the callback. Mostly useful
+ * for tests and HMR. Production apps should not need to call this.
  */
 export function shutdown(): void {
   uninstallAutoCapture();
@@ -173,7 +152,6 @@ export function shutdown(): void {
   initialized = false;
 }
 
-// Public type surface
 export type {
   InitConfig,
   CaptureConfig,

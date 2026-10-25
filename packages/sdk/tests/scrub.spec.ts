@@ -7,18 +7,14 @@ import { buildScrubContext, scrub, scrubHeaders } from '../src/core/scrub.js';
 describe('scrub', () => {
   it('redacts default PII field names regardless of case AND context', () => {
     const ctx = buildScrubContext({
-      // Configure unrelated fields so we know the redaction comes from defaults.
       redactFields: ['name'],
       redactContexts: [],
     });
-    // `password` is in the default globals and not inside any context here.
-    const root = scrub({ password: 'p', other: 'ok' }, ctx);
-    expect(root).toEqual({ password: '[REDACTED]', other: 'ok' });
+    const out = scrub({ password: 'p', other: 'ok' }, ctx);
+    expect(out).toEqual({ password: '[REDACTED]', other: 'ok' });
   });
 
   it('does NOT redact configured redactFields when no redactContexts is set', () => {
-    // The contract is: redactFields apply *inside* redactContexts. With an
-    // empty redactContexts, configured fields stay.
     const ctx = buildScrubContext({
       redactFields: ['name', 'amount'],
       redactContexts: [],
@@ -27,7 +23,7 @@ describe('scrub', () => {
     expect(out).toEqual({ name: 'Comida', amount: 100, other: 'ok' });
   });
 
-  it('configured redactFields still match case-insensitively inside contexts', () => {
+  it('redacts fields inside configured redactContexts (case-insensitive)', () => {
     const ctx = buildScrubContext({
       redactFields: ['name', 'amount'],
       redactContexts: ['entry'],
@@ -41,36 +37,6 @@ describe('scrub', () => {
     expect(out.entry.other).toBe('ok');
   });
 
-  it('redacts fields inside configured redactContexts', () => {
-    const ctx = buildScrubContext({
-      redactFields: ['name', 'amount', 'balance'],
-      redactContexts: ['entry', 'supplier', 'account'],
-    });
-    const input = {
-      entry: { id: 1, name: 'Comida' },
-      supplier: { name: 'Acme', notes: 'top' },
-      balance: 100,
-      meta: { name: 'untouched at root' },
-    };
-    const out = scrub(input, ctx) as Record<string, unknown>;
-
-    const entry = out.entry as Record<string, unknown>;
-    expect(entry.id).toBe(1);
-    expect(entry.name).toBe('[REDACTED]');
-
-    const supplier = out.supplier as Record<string, unknown>;
-    expect(supplier.name).toBe('[REDACTED]');
-    expect(supplier.notes).toBe('top'); // not in redactFields
-
-    // Root `balance` is NOT inside any configured context and not in
-    // redactKeys, so it stays.
-    expect(out.balance).toBe(100);
-
-    // Root `meta.name` is also NOT inside a configured context.
-    const meta = out.meta as Record<string, unknown>;
-    expect(meta.name).toBe('untouched at root');
-  });
-
   it('redacts deeply nested fields inside configured contexts', () => {
     const ctx = buildScrubContext({
       redactFields: ['amount'],
@@ -80,6 +46,31 @@ describe('scrub', () => {
     const out = scrub(input, ctx) as { entry: { line: { amount: string; label: string } } };
     expect(out.entry.line.amount).toBe('[REDACTED]');
     expect(out.entry.line.label).toBe('ok');
+  });
+
+  it('redacts fields inside configured contexts, leaves root-level non-context fields alone', () => {
+    const ctx = buildScrubContext({
+      redactFields: ['name', 'amount', 'notes'],
+      redactContexts: ['entry', 'supplier', 'account'],
+    });
+    const input = {
+      entry: { id: 1, name: 'Comida', other: 'kept' },
+      supplier: { name: 'Acme', notes: 'top' },
+      balance: 100,        // not in redactFields, not in any context → kept
+      meta: { name: 'untouched at root' },  // 'meta' is not a context, but 'name' is in redactFields;
+                                          // since we are outside any context, 'name' is kept here
+    };
+    const out = scrub(input, ctx) as Record<string, unknown>;
+    const entry = out.entry as Record<string, unknown>;
+    expect(entry.id).toBe(1);
+    expect(entry.name).toBe('[REDACTED]');
+    expect(entry.other).toBe('kept');
+    const supplier = out.supplier as Record<string, unknown>;
+    expect(supplier.name).toBe('[REDACTED]');
+    expect(supplier.notes).toBe('[REDACTED]');
+    expect(out.balance).toBe(100);
+    const meta = out.meta as Record<string, unknown>;
+    expect(meta.name).toBe('untouched at root');
   });
 
   it('redacts Bearer tokens inside string values', () => {

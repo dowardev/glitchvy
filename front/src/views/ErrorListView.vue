@@ -5,47 +5,61 @@
   <ion-page>
     <ion-header>
       <ion-toolbar>
-        <ion-title>glitchvy · errors</ion-title>
-        <ion-buttons slot="end">
-          <ion-button @click="onSignOut" data-testid="signout">Sign out</ion-button>
-        </ion-buttons>
+        <ion-title>Errores</ion-title>
       </ion-toolbar>
     </ion-header>
-    <ion-content class="ion-padding">
-      <ErrorFilters
-        v-model:level="filterLevel"
-        v-model:status="filterStatus"
-        v-model:search="filterSearch"
-        @apply="onApply"
-        @reset="onResetFilters"
-      />
-      <ion-loading :is-open="store.loading" message="Loading" />
-      <p v-if="store.error" data-testid="load-error">{{ store.error }}</p>
-      <ErrorListItem
-        v-for="report in store.list"
-        :key="report.id"
-        :report="report"
-        @open="onOpen"
-      />
-      <div v-if="!store.loading && store.list.length === 0" data-testid="empty">
-        <p>No errors match the current filters.</p>
+
+    <ion-content>
+      <ErrorFilters v-model="filters" @update:modelValue="handleFiltersChange" />
+
+      <div v-if="errorsStore.loading && errorsStore.list.length === 0" class="ion-text-center ion-padding">
+        <ion-spinner name="crescent" />
+        <p>Cargando errores...</p>
       </div>
-      <div class="pagination">
-        <ion-button
-          fill="outline"
-          :disabled="!store.prevCursor"
-          @click="onPrev"
-          data-testid="prev"
-        >
-          Prev
+
+      <div v-else-if="errorsStore.error" class="ion-text-center ion-padding">
+        <ion-icon name="alert-circle-outline" size="large" color="danger" />
+        <p>{{ errorsStore.error }}</p>
+        <ion-button fill="outline" @click="loadPage">
+          Reintentar
         </ion-button>
+      </div>
+
+      <ion-list v-else-if="errorsStore.list.length === 0" lines="none">
+        <ion-item>
+          <ion-label class="ion-text-center">
+            <ion-icon name="bug-outline" size="large" color="medium" />
+            <h2>No hay errores</h2>
+            <p>{{ filters.project_id ? 'Para este proyecto' : 'En todos los proyectos' }}</p>
+          </ion-label>
+        </ion-item>
+      </ion-list>
+
+      <ion-list v-else lines="full">
+        <ErrorListItem
+          v-for="error in errorsStore.list"
+          :key="error.id"
+          :error="error"
+        />
+      </ion-list>
+
+      <div v-if="errorsStore.nextCursor || errorsStore.prevCursor" class="ion-text-center ion-padding">
         <ion-button
-          fill="outline"
-          :disabled="!store.nextCursor"
-          @click="onNext"
-          data-testid="next"
+          fill="clear"
+          @click="loadPage(errorsStore.prevCursor ?? undefined)"
+          :disabled="!errorsStore.prevCursor || errorsStore.loading"
         >
-          Next
+          <ion-icon slot="start" :icon="chevronBackOutline" />
+          Anterior
+        </ion-button>
+        <span class="ion-padding-horizontal">{{ errorsStore.list.length }} errores</span>
+        <ion-button
+          fill="clear"
+          @click="loadPage(errorsStore.nextCursor ?? undefined)"
+          :disabled="!errorsStore.nextCursor || errorsStore.loading"
+        >
+          Siguiente
+          <ion-icon slot="end" :icon="chevronForwardOutline" />
         </ion-button>
       </div>
     </ion-content>
@@ -53,90 +67,61 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
-import { useRouter } from 'vue-router';
 import {
-  IonPage,
-  IonHeader,
-  IonToolbar,
-  IonTitle,
-  IonContent,
   IonButton,
-  IonButtons,
-  IonLoading,
+  IonContent,
+  IonHeader,
+  IonIcon,
+  IonItem,
+  IonLabel,
+  IonList,
+  IonPage,
+  IonSpinner,
+  IonTitle,
+  IonToolbar,
 } from '@ionic/vue';
-import { useAuthStore } from '../stores/auth.js';
-import { useErrorsStore } from '../stores/errors.js';
-import ErrorFilters from '../components/ErrorFilters.vue';
-import ErrorListItem from '../components/ErrorListItem.vue';
-import type { Level, Status } from '../types.js';
+import { onMounted, watch, ref } from 'vue';
+import { chevronBackOutline, chevronForwardOutline } from 'ionicons/icons';
+import { useErrorsStore } from '@/stores/errors';
+import ErrorListItem from '@/components/ErrorListItem.vue';
+import ErrorFilters from '@/components/ErrorFilters.vue';
+import type { ErrorFilters as ErrorFiltersType } from '@/types';
 
-const auth = useAuthStore();
-const store = useErrorsStore();
-const router = useRouter();
+const errorsStore = useErrorsStore();
 
-const filterLevel = ref<Level | ''>('');
-const filterStatus = ref<Status | ''>('');
-const filterSearch = ref<string>('');
-
-let nextStack: string[] = [];
-let prevStack: string[] = [];
-
-function pushCursor(c: string | null): void {
-  nextStack.push(c ?? '');
-}
-
-async function onApply(): Promise<void> {
-  store.setFilters({
-    level: (filterLevel.value || undefined) as Level | undefined,
-    status: (filterStatus.value || undefined) as Status | undefined,
-    search: filterSearch.value || undefined,
-  });
-  prevStack = [];
-  nextStack = [];
-  pushCursor(null);
-  await store.fetchPage();
-}
-
-async function onResetFilters(): Promise<void> {
-  filterLevel.value = '';
-  filterStatus.value = '';
-  filterSearch.value = '';
-  await onApply();
-}
-
-async function onNext(): Promise<void> {
-  prevStack.push(store.nextCursor ?? '');
-  pushCursor(store.nextCursor);
-  await store.fetchPage(store.nextCursor ?? undefined);
-}
-
-async function onPrev(): Promise<void> {
-  nextStack.pop();
-  prevStack.pop();
-  const target = prevStack[prevStack.length - 1] ?? '';
-  await store.fetchPage(target || undefined);
-}
-
-async function onOpen(id: number): Promise<void> {
-  await router.push({ name: 'error-detail', params: { id } });
-}
-
-async function onSignOut(): Promise<void> {
-  auth.clear();
-  await router.push({ name: 'login' });
-}
-
-onMounted(async () => {
-  await store.fetchPage();
+const filters = ref<ErrorFiltersType>({
+  level: undefined,
+  status: undefined,
+  search: undefined,
+  project_id: undefined,
 });
-</script>
 
-<style scoped>
-.pagination {
-  display: flex;
-  gap: 8px;
-  margin-top: 16px;
-  justify-content: center;
+function handleFiltersChange(newFilters: ErrorFiltersType): void {
+  filters.value = newFilters;
+  loadPage();
 }
-</style>
+
+interface Props {
+  projectId?: number;
+}
+
+const props = defineProps<Props>();
+
+onMounted(() => {
+  if (props.projectId) {
+    errorsStore.setFilters({ project_id: props.projectId });
+  }
+  loadPage();
+});
+
+watch(() => props.projectId, (newId) => {
+  if (newId) {
+    errorsStore.setFilters({ project_id: newId });
+    loadPage();
+  }
+});
+
+async function loadPage(cursor?: string): Promise<void> {
+  await errorsStore.fetchPage(cursor);
+}
+</script>

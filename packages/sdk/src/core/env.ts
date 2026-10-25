@@ -2,22 +2,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * Defensive env detection for browser globals. SSR-safe (all reads no-op when
- * the runtime is not a browser).
+ * Defensive env detection. SSR-safe (no-op when not in a browser).
  */
-
-type AnyGlobal = Record<string, unknown>;
 
 function readGlobal(key: string): unknown {
-  return (globalThis as unknown as AnyGlobal)[key];
+  return (globalThis as Record<string, unknown>)[key];
 }
 
-/**
- * The platform label attached to every report. Today it always returns
- * `'web'`; future versions will branch on Capacitor / Cordova / Electron.
- */
+/** Platform label. Returns 'web' today; future versions may detect Capacitor / Electron. */
 export function readPlatform(): string {
-  // Reserved hook for native consumers; intentionally a constant for now.
   return 'web';
 }
 

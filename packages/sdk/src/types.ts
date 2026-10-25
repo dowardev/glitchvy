@@ -2,18 +2,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * Public type surface for the glitchvy SDK.
- *
- * Keep this file dependency-free so consumers can `import type` from it without
- * pulling in the runtime.
+ * Public type surface for the glitchvy SDK. Keep this file dependency-free
+ * so consumers can `import type` without pulling the runtime in.
  */
 
 export interface InitConfig {
-  /** Required. Where the SDK POSTs. URL-absolute or root-relative. */
+  /** Required. The SaaS ingestion endpoint. e.g. `https://errors.dowar.xyz/api/glitchvy/errors` */
   ingestionUrl: string;
-  /** Required. Bearer token shared with the glitchvy-laravel server SDK. */
+  /** Required. Per-project API key (Bearer token). */
   apiKey: string;
-  /** Required. The consumer app's version, used for error grouping. */
+  /** Required. The consumer app's version. Used for grouping. */
   appVersion: string;
   /** Required. Free-form environment label (e.g. "production", "staging"). */
   environment: string;
@@ -25,13 +23,13 @@ export interface InitConfig {
   maxQueueSize?: number;
   /** Optional. Per-event retry budget. Default: 3. */
   maxRetries?: number;
-  /** Optional. Backoff base (ms); doubles each attempt. Default: 1000. */
+  /** Optional. Backoff base in ms; doubles each attempt. Default: 1000. */
   retryBaseMs?: number;
 
   /** Optional. Toggle which global auto-capture hooks are installed. */
   capture?: CaptureConfig;
 
-  /** Optional. Endpoint for screenshot uploads (used by future SDK helpers). */
+  /** Optional. Screenshot upload endpoint (used by future SDK helpers). */
   screenshotUploadUrl?: string;
 }
 
@@ -52,15 +50,9 @@ export interface ErrorContext {
 }
 
 export interface ScrubRules {
-  /**
-   * Keys (case-insensitive) to redact whenever we encounter them, and especially
-   * inside the contexts listed in {@link ScrubRules.redactContexts}.
-   */
+  /** Keys (case-insensitive) redacted inside contexts in {@link ScrubRules.redactContexts}. */
   redactFields?: string[];
-  /**
-   * Top-level subtrees of the payload in which {@link ScrubRules.redactFields}
-   * apply. A field whose **parent** is one of these contexts gets redacted.
-   */
+  /** Top-level subtrees where redactFields apply. */
   redactContexts?: string[];
 }
 
@@ -76,6 +68,7 @@ export interface ReportEvent {
   appVersion: string;
   environment: string;
   platform: string;
+  /** Always a string; {@link readRoute} returns '/' as fallback, never null. */
   route: string;
   userAgent: string;
   level: ErrorLevel;

@@ -1,11 +1,6 @@
 // SPDX-FileCopyrightText: 2026 DowarDev
 // SPDX-License-Identifier: AGPL-3.0-only
 
-/**
- * End-to-end tests of the public SDK surface. These exercise the wiring from
- * {@link initErrorReporter} → auto-capture → transport → offline queue.
- */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   addBreadcrumb,
@@ -45,8 +40,6 @@ describe('initErrorReporter', () => {
   it('is idempotent (re-init does not double-install hooks)', async () => {
     initErrorReporter(CFG);
     initErrorReporter(CFG);
-    // Replacing config does not change that hooks are installed — verifying
-    // by trying to register a callback and checking the state was overwritten.
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
     vi.stubGlobal('fetch', fetchMock);
     await reportError('hello');
@@ -94,7 +87,6 @@ describe('reportError', () => {
     };
     expect(body.context.data.entry.name).toBe('[REDACTED]');
     expect(body.context.data.entry.qty).toBe(2);
-    // Root-level `balance` is not in any context → unredacted.
     expect(body.context.data.balance).toBe(100);
   });
 
@@ -121,13 +113,12 @@ describe('reportError', () => {
     vi.stubGlobal('fetch', fetchMock);
     await reportError(new Error('will be queued'));
     expect(await queue.size()).toBe(1);
-    expect(fetchMock).toHaveBeenCalledTimes(2); // initial + 1 retry
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
 
 describe('flush / getQueueSize', () => {
   it('flush() drains queued events when the server is back', async () => {
-    // First send: server down → queue
     let serveUp = false;
     const fetchMock = vi.fn().mockImplementation(() => {
       if (!serveUp) return Promise.reject(new Error('offline'));
