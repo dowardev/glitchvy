@@ -16,8 +16,14 @@
 import type { ScrubRules } from '../types.js';
 
 const MASK = '[REDACTED]';
-const BEARER_PREFIX = 'Bearer ';
-const BEARER_REGEX = /Bearer\s+[A-Za-z0-9._-]+/gi;
+/**
+ * The token run is "anything up to whitespace", so base64/JWT characters
+ * (`+`, `/`, `=`) are covered. Quotes and backticks are excluded so a token
+ * embedded in a quoted fragment does not swallow the surrounding punctuation.
+ */
+const BEARER_REGEX = /(Bearer)(\s+)[^\s"'`]+/gi;
+/** Case-insensitive presence check, matching the regex flags above. */
+const BEARER_PRESENT_REGEX = /bearer\s/i;
 
 const DEFAULT_GLOBAL_REDACT_KEYS = new Set<string>([
   'password',
@@ -80,8 +86,8 @@ export function scrub(value: unknown, ctx: ScrubContext): unknown {
 function walk(value: unknown, ctx: ScrubContext, insideContext: boolean): unknown {
   if (value === null || value === undefined) return value;
   if (typeof value === 'string') {
-    if (value.indexOf(BEARER_PREFIX) === -1) return value;
-    return value.replace(BEARER_REGEX, `${BEARER_PREFIX}${MASK}`);
+    if (!BEARER_PRESENT_REGEX.test(value)) return value;
+    return value.replace(BEARER_REGEX, `$1$2${MASK}`);
   }
   if (typeof value !== 'object') return value;
   if (Array.isArray(value)) {

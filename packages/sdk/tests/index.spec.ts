@@ -90,6 +90,21 @@ describe('reportError', () => {
     expect(body.context.data.balance).toBe(100);
   });
 
+  it('redacts a JWT bearer token from the outgoing payload', async () => {
+    initErrorReporter(CFG);
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetchMock);
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.abc+/def==';
+    await reportError(new Error('hi'), {
+      data: { headers: { authorization: `Bearer ${jwt}` } },
+    });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const raw = init.body as string;
+    expect(raw).not.toContain('abc+/def==');
+    const body = JSON.parse(raw) as { context: { data: { headers: { authorization: string } } } };
+    expect(body.context.data.headers.authorization).toBe('Bearer [REDACTED]');
+  });
+
   it('attaches user context + breadcrumb trail', async () => {
     initErrorReporter(CFG);
     setUserContext({ userId: '42', tier: 'pro' });
