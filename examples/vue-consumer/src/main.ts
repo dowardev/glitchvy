@@ -14,7 +14,7 @@ import App from './App.vue';
 
 initErrorReporter({
   ingestionUrl: import.meta.env.VITE_GLITCHVY_INGESTION_URL ?? '/api/glitchvy/errors',
-  apiKey: import.meta.env.VITE_GLITCHVY_API_KEY ?? 'gvy_replace_with_real_key',
+  apiKey: import.meta.env.VITE_GLITCHVY_API_KEY ?? 'glitchvy_your_api_key_here',
   appVersion: '0.1.0-example',
   environment: 'development',
   scrubRules: {

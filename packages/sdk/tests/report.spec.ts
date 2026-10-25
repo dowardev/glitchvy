@@ -18,12 +18,12 @@ const BASE_CONFIG: InitConfig = {
     redactContexts: ['entry', 'supplier', 'account'],
   },
   maxRetries: 1,
-  retryBaseMs: 1, // tiny so tests are fast
+  retryBaseMs: 1,
 };
 
-function makeEvent(eventId = 'e-1'): ReportEvent {
+function makeEvent(id = '1'): ReportEvent {
   return {
-    eventId,
+    eventId: id,
     timestamp: '2026-01-01T00:00:00.000Z',
     appVersion: '0.1.0',
     environment: 'test',
@@ -40,6 +40,7 @@ function makeEvent(eventId = 'e-1'): ReportEvent {
 beforeEach(() => {
   resetState();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe('normalizeError', () => {
@@ -78,7 +79,6 @@ describe('normalizeError', () => {
     circ.self = circ;
     const out = normalizeError(circ);
     expect(out?.name).toBe('C');
-    // Either message is a circular-safe JSON fallback or a String() fallback.
     expect(typeof out?.message).toBe('string');
   });
 
@@ -112,7 +112,7 @@ describe('buildEvent', () => {
     const entry = data.entry as Record<string, unknown>;
     expect(entry.name).toBe('[REDACTED]');
     expect(entry.amount).toBe('[REDACTED]');
-    expect(data.balance).toBe(100); // not in any context
+    expect(data.balance).toBe(100);
   });
 
   it('attaches user context + breadcrumb trail', () => {
@@ -158,7 +158,7 @@ describe('send', () => {
     vi.stubGlobal('fetch', fetchMock);
     const res = await send(makeEvent('a'), { ...BASE_CONFIG, maxRetries: 1, retryBaseMs: 1 });
     expect(res).toBe('queued');
-    expect(fetchMock).toHaveBeenCalledTimes(2); // initial + 1 retry
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(await queue.size()).toBe(1);
   });
 
@@ -167,7 +167,6 @@ describe('send', () => {
     vi.stubGlobal('fetch', fetchMock);
     const res = await send(makeEvent('a'), { ...BASE_CONFIG, maxRetries: 3, retryBaseMs: 1 });
     expect(res).toBe('queued');
-    // No retries for 400.
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

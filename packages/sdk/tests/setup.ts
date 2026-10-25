@@ -2,26 +2,28 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * Vitest setup file. Loads `fake-indexeddb` once per test file and resets the
- * shared module state from `./src/core/state.ts` between tests.
+ * Vitest setup: loads `fake-indexeddb` and resets module state between tests.
  */
 
 import 'fake-indexeddb/auto';
 
-import { afterEach } from 'vitest';
+import { afterEach, beforeEach } from 'vitest';
 import { resetState, getState } from '../src/core/state.js';
 import * as queue from '../src/core/queue.js';
+
+beforeEach(() => {
+  if (typeof localStorage !== 'undefined') {
+    localStorage.clear();
+  }
+});
 
 afterEach(async () => {
   resetState();
   try {
-    // Empty the IDB store between tests so persisted counts are deterministic.
     await queue.clear();
   } catch {
-    // ignore — IDB may be unavailable in some tests
+    // ignore
   }
-  // Reset the lazy IDB connection so the next test re-opens a clean DB.
   queue.__resetDb();
-  // Suppress an "unused" warning from lint on the `getState` import side-effect.
   void getState;
 });

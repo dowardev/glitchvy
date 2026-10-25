@@ -2,15 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * IndexedDB-backed offline queue. Events whose POST failed (network down,
- * retry budget exhausted, 5xx) land here and flush on the `online` event
- * or via the explicit {@link flush} helper.
+ * IndexedDB-backed offline queue. Events whose POST failed are persisted
+ * here and flushed on the `online` event.
  *
- * Storage shape: a single object store named `queue` keyed by `eventId`,
- * upsert on enqueue — re-queuing the same event replaces the previous copy.
+ * Storage shape: a single object store `queue` keyed by `eventId`. Upsert on
+ * enqueue — re-queuing the same event replaces the previous copy.
  *
- * `@vitest-environment jsdom` + `fake-indexeddb/auto` (loaded in `tests/setup.ts`)
- * is the standard test environment. Production code never touches jsdom.
+ * Test env: `fake-indexeddb/auto` is loaded by `tests/setup.ts`.
  */
 
 import type { ReportEvent } from '../types.js';
@@ -23,9 +21,6 @@ let dbPromise: Promise<IDBDatabase> | null = null;
 
 function openDb(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
-  // `indexedDB` is a global in browsers; in SSR consumers it's undefined.
-  // We assume the consumer is browser-side at runtime; tests polyfill via
-  // `fake-indexeddb/auto`.
   if (typeof indexedDB === 'undefined') {
     return Promise.reject(new Error('IndexedDB is not available in this runtime.'));
   }
@@ -64,10 +59,7 @@ export async function enqueue(event: ReportEvent): Promise<void> {
   await txToPromise(tx);
 }
 
-/**
- * Atomically read every queued event and remove them. Uses a cursor inside a
- * single readwrite transaction so concurrent writers can't race us.
- */
+/** Atomically read every queued event and remove them. */
 export async function dequeueAll(): Promise<ReportEvent[]> {
   const db = await openDb();
   const tx = db.transaction(STORE_NAME, 'readwrite');

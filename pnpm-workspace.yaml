@@ -8,13 +8,14 @@ packages:
   - 'examples/*'
 
 allowBuilds:
-  vue-demi: set this to true or false
+  core-js: true
+  esbuild: true
+  vue-demi: true
 
-# `back/` is a Laravel project managed by composer, not pnpm.
+# `back/` is a Laravel standalone app managed by composer, not pnpm.
 
 # Whitelist of dependencies whose build/postinstall scripts are allowed to run.
-# Pnpm 11+ no longer reads `pnpm.onlyBuiltDependencies` from package.json — it
-# lives here in the workspace config.
+# Pnpm 11+ reads this from pnpm-workspace.yaml (not package.json).
 onlyBuiltDependencies:
   - 'esbuild'
   - 'vue-demi'

@@ -2,34 +2,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * Transport layer. Builds a {@link ReportEvent} from a thrown error (or string),
- * scrubs PII in user-controlled subtrees, then attempts a POST with
- * exponential-backoff retry. On terminal failure the event is enqueued in
- * IndexedDB to be flushed later.
- *
- * Module is browser-fenced: `fetch` is assumed to be the standard Fetch API
- * (production browser / modern Node 18+). Tests use Vitest's jsdom + a fetch
- * polyfill if needed.
+ * Transport. Builds a {@link ReportEvent} from a thrown value + optional
+ * context, scrubs PII in user-controlled subtrees, then attempts a POST
+ * with exponential-backoff retry. On terminal failure the event is
+ * persisted in IndexedDB to be flushed later.
  */
 
 import type { ErrorContext, ErrorLevel, InitConfig, ReportEvent } from '../types.js';
 import { readPlatform, readRoute, readUserAgent } from './env.js';
-import { buildScrubContext, scrub } from './scrub.js';
+import { scrub, buildScrubContext } from './scrub.js';
 import type { ScrubContext } from './scrub.js';
 import { getState } from './state.js';
 import * as queue from './queue.js';
 
-/**
- * Status codes we consider worth retrying. Everything else is queued
- * immediately on first failure to preserve storage space.
- */
+/** Status codes we consider worth retrying. */
 const RETRYABLE_STATUS = new Set<number>([408, 425, 429, 500, 502, 503, 504]);
 
 export type SendResult = 'sent' | 'queued' | 'dropped';
 
-/**
- * Coerce an arbitrary thrown value into the `error` shape of a {@link ReportEvent}.
- */
 export function normalizeError(err: unknown):
   | { name: string; message: string; stack?: string; type?: string }
   | null {
@@ -75,8 +65,6 @@ function newEventId(): string {
   if (c && typeof c.randomUUID === 'function') {
     return c.randomUUID();
   }
-  // Acceptable fallback: timestamp + random suffix. Not cryptographically strong
-  // but unique per event in practice for the queue's purposes.
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
@@ -119,7 +107,6 @@ export function buildEvent(
     event.user = { ...state.user };
   }
 
-  // Scrub user-controlled subtrees.
   if (event.context.data) {
     event.context.data = scrub(event.context.data, scrubCtx) as Record<string, unknown>;
   }
@@ -144,10 +131,6 @@ export function buildEvent(
 
 /** Single fetch attempt. Throws on network failure or returns the response. */
 export async function sendOnce(event: ReportEvent, config: InitConfig): Promise<Response> {
-  // The outbound headers the SDK itself constructs never go through scrubHeaders:
-  // the Authorization Bearer MUST reach the server for auth to work, and the
-  // event id is opaque. {@link scrubHeaders} is reserved for consumer-supplied
-  // headers carried in `context.data`.
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${config.apiKey}`,
@@ -179,7 +162,6 @@ export async function send(event: ReportEvent, config: InitConfig): Promise<Send
       const res = await sendOnce(event, config);
       if (res.ok) return 'sent';
       if (!RETRYABLE_STATUS.has(res.status)) {
-        // Permanent (4xx other than 408/425/429) → queue.
         break;
       }
     } catch (_err) {
@@ -206,12 +188,12 @@ async function persist(event: ReportEvent, config: InitConfig): Promise<SendResu
 }
 
 /**
- * Drain the offline queue: each event's send is a single attempt (the queue's
- * own retry/queue cycle kicks in if the network is still down for that event).
- * Successful sends remove the entry from the queue; failures re-enqueue via
- * the upsert-on-eventId behavior of the store.
+ * Drain the offline queue: each event's send is a single attempt; failures
+ * are re-enqueued (upsert on eventId avoids duplicates).
  */
-export async function flushQueue(config: InitConfig): Promise<{ sent: number; requeued: number }> {
+export async function flushQueue(
+  config: InitConfig,
+): Promise<{ sent: number; requeued: number }> {
   let events: ReportEvent[];
   try {
     events = await queue.dequeueAll();
@@ -235,14 +217,14 @@ export async function flushQueue(config: InitConfig): Promise<{ sent: number; re
         await queue.remove(event.eventId);
         sent++;
       } catch {
-        // Best-effort cleanup; failure is non-fatal.
+        // best-effort cleanup
       }
     } else {
       try {
         await queue.enqueue(event);
         requeued++;
       } catch {
-        // Drop — queue is broken or full.
+        // drop
       }
     }
   }
@@ -250,7 +232,7 @@ export async function flushQueue(config: InitConfig): Promise<{ sent: number; re
   return { sent, requeued };
 }
 
-/** Test-only: expose the shared scrub context to callers without re-importing. */
+/** Build a {@link ScrubContext} from a config. */
 export function makeScrubCtx(config: InitConfig): ScrubContext {
   return buildScrubContext(config.scrubRules);
 }

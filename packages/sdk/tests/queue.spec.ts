@@ -42,7 +42,7 @@ describe('queue (IndexedDB)', () => {
   it('upsert on enqueue (same eventId replaces)', async () => {
     await clear();
     await enqueue(makeEvent('dup'));
-    await enqueue(makeEvent('dup')); // same eventId
+    await enqueue(makeEvent('dup'));
     expect(await size()).toBe(1);
   });
 

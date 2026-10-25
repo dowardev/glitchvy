@@ -14,10 +14,7 @@ export default defineConfig({
       reporter: ['text', 'html', 'cobertura', 'json-summary'],
       reportsDirectory: './coverage',
       include: ['src/**/*.ts'],
-      exclude: [
-        'src/**/*.d.ts',
-        'src/index.ts', // re-export shim
-      ],
+      exclude: ['src/**/*.d.ts', 'src/index.ts', 'src/types.ts'],
       thresholds: {
         lines: 80,
         functions: 80,

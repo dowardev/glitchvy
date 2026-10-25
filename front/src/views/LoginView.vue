@@ -3,68 +3,110 @@
 
 <template>
   <ion-page>
-    <ion-header>
-      <ion-toolbar>
-        <ion-title>glitchvy · login</ion-title>
-      </ion-toolbar>
-    </ion-header>
-    <ion-content class="ion-padding">
-      <h2>Sign in</h2>
-      <p>
-        Paste the user token your Laravel app returned when you authenticated.
-        The SDK forwards this on every admin API call as the
-        <code>X-Glitchvy-User-Token</code> header.
-      </p>
-      <ion-list>
-        <ion-item>
-          <ion-input
-            v-model="token"
-            label="User token"
-            label-placement="stacked"
-            type="password"
-            placeholder="(opaque token)"
-            data-testid="token-input"
-            autocomplete="off"
-          />
-        </ion-item>
-      </ion-list>
-      <ion-button
-        expand="block"
-        :disabled="!token.trim()"
-        @click="onSubmit"
-        data-testid="login-submit"
-      >
-        Sign in
-      </ion-button>
+    <ion-content :fullscreen="true">
+      <ion-grid style="height: 100%">
+        <ion-row class="ion-justify-content-center ion-align-items-center">
+          <ion-col size="12" size-md="8" size-lg="5" size-xl="4">
+            <div class="ion-text-center ion-padding">
+              <h1>Glitchvy</h1>
+              <p>Panel de administración</p>
+            </div>
+
+            <ion-list inset>
+              <ion-item>
+                <ion-input
+                  v-model="form.email"
+                  type="email"
+                  label="Email"
+                  label-placement="stacked"
+                  placeholder="tu@email.com"
+                  required
+                  autocomplete="email"
+                  :disabled="loading"
+                  @ionBlur="validateEmail"
+                />
+              </ion-item>
+              <ion-item>
+                <ion-input
+                  v-model="form.password"
+                  type="password"
+                  label="Contraseña"
+                  label-placement="stacked"
+                  required
+                  autocomplete="current-password"
+                  :disabled="loading"
+                />
+              </ion-item>
+            </ion-list>
+
+            <ion-text v-if="error" color="danger">
+              <p class="ion-padding-start">{{ error }}</p>
+            </ion-text>
+
+            <div class="ion-padding">
+              <ion-button
+                type="submit"
+                expand="block"
+                :disabled="loading || !form.email || !form.password"
+                @click="handleLogin"
+              >
+                <ion-spinner v-if="loading" name="dots" slot="start" />
+                {{ loading ? 'Iniciando sesión...' : 'Iniciar sesión' }}
+              </ion-button>
+            </div>
+          </ion-col>
+        </ion-row>
+      </ion-grid>
     </ion-content>
   </ion-page>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
-import { useRouter } from 'vue-router';
 import {
-  IonPage,
-  IonHeader,
-  IonToolbar,
-  IonTitle,
-  IonContent,
-  IonList,
-  IonItem,
-  IonInput,
   IonButton,
+  IonCol,
+  IonContent,
+  IonGrid,
+  IonInput,
+  IonItem,
+  IonList,
+  IonPage,
+  IonRow,
+  IonSpinner,
+  IonText,
 } from '@ionic/vue';
-import { useAuthStore } from '../stores/auth.js';
+import { ref } from 'vue';
+import { useIonRouter } from '@ionic/vue';
+import { useAuthStore } from '@/stores/auth';
 
-const auth = useAuthStore();
-const router = useRouter();
-const token = ref<string>('');
+const ionRouter = useIonRouter();
+const authStore = useAuthStore();
 
-async function onSubmit(): Promise<void> {
-  const value = token.value.trim();
-  if (!value) return;
-  auth.setToken(value);
-  token.value = '';
-  await router.push({ name: 'errors' });
+const form = ref({ email: '', password: '' });
+const loading = ref(false);
+const error = ref<string | null>(null);
+
+function validateEmail(): void {
+  error.value = null;
+}
+
+async function handleLogin(): Promise<void> {
+  if (loading.value || !form.value.email.trim() || !form.value.password) return;
+
+  loading.value = true;
+  error.value = null;
+
+  try {
+    await authStore.login({ email: form.value.email.trim(), password: form.value.password });
+    await ionRouter.push('/projects');
+  } catch (err) {
+    if (err instanceof Error) {
+      error.value = err.message;
+    } else {
+      error.value = 'Credenciales inválidas';
+    }
+  } finally {
+    loading.value = false;
+  }
 }
 </script>

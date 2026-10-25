@@ -5,7 +5,7 @@ import { initErrorReporter, reportError, setUserContext, addBreadcrumb } from 'g
 
 // In a real app these come from your build/runtime config.
 const API_KEY = import.meta.env?.VITE_GLITCHVY_API_KEY
-  ?? 'gvy_replace_with_real_api_key';
+  ?? 'glitchvy_your_api_key_here';
 const INGESTION_URL = '/api/glitchvy/errors';
 
 initErrorReporter({
@@ -38,6 +38,5 @@ document.getElementById('report-btn').addEventListener('click', async () => {
 
 // Trigger an unhandled error to show the auto-capture path.
 document.getElementById('throw-btn').addEventListener('click', () => {
-  // eslint-disable-next-line no-undef
   setTimeout(() => undefined.deeplyMissingFunction());
 });

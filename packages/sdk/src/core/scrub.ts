@@ -4,25 +4,13 @@
 /**
  * PII scrubbing engine.
  *
- * Two layers of behavior:
+ * Two layers:
+ *   1. **Global** redact keys (built-in defaults like password, token, api_key)
+ *      apply anywhere in the tree.
+ *   2. **Contextual** redact keys (consumer's `redactFields`) apply **only inside**
+ *      keys whose name is in `redactContexts` (or recursively inside one of them).
  *
- *   1. **Global** redact keys (built-in defaults like `password`, `api_key`, `token`)
- *      apply *anywhere in the tree* without configuration. The default safety net.
- *
- *   2. **Contextual** redact keys (the consumer's `redactFields`) apply **only
- *      inside** a key whose name is one of the consumer's `redactContexts`
- *      (or recursively inside one of those). For example, with:
- *
- *          scrubRules: { redactFields: ['name', 'amount'],
- *                        redactContexts: ['entry', 'account'] }
- *
- *      input `{ entry: { name: 'foo' }, balance: 100 }` returns
- *      `{ entry: { name: '[REDACTED]' }, balance: 100 }`. The root `balance` is
- *      left alone because it isn't inside a configured context.
- *
- *   3. **String scrubbing**: any `Bearer xxx...` literal in a string value is
- *      replaced with `Bearer [REDACTED]`. We check for the substring before
- *      invoking `replace` to dodge the regex `lastIndex` gotcha with `g` flag.
+ * Bearer tokens in string values are masked (replaced with `Bearer [REDACTED]`).
  */
 
 import type { ScrubRules } from '../types.js';
@@ -59,11 +47,8 @@ const DEFAULT_HEADER_REDACT_KEYS = new Set<string>([
 ]);
 
 export interface ScrubContext {
-  /** Keys redacted anywhere in the tree. Defaults always apply. */
   globalRedactKeys: ReadonlySet<string>;
-  /** Consumer-configured keys; only redactable while inside a contextual parent. */
   contextualRedactKeys: ReadonlySet<string>;
-  /** Top-level subtree names that "open" the contextual behavior. */
   contextualParents: ReadonlySet<string>;
 }
 
@@ -94,31 +79,24 @@ export function scrub(value: unknown, ctx: ScrubContext): unknown {
 
 function walk(value: unknown, ctx: ScrubContext, insideContext: boolean): unknown {
   if (value === null || value === undefined) return value;
-
   if (typeof value === 'string') {
     if (value.indexOf(BEARER_PREFIX) === -1) return value;
     return value.replace(BEARER_REGEX, `${BEARER_PREFIX}${MASK}`);
   }
-
   if (typeof value !== 'object') return value;
-
   if (Array.isArray(value)) {
     return value.map((item) => walk(item, ctx, insideContext));
   }
-
   if (!isPlainObject(value)) return value;
 
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value)) {
     const kLower = k.toLowerCase();
     const nowInside = insideContext || ctx.contextualParents.has(kLower);
-
-    // Layer 1: globals always apply.
     if (ctx.globalRedactKeys.has(kLower)) {
       out[k] = MASK;
       continue;
     }
-    // Layer 2: contextual keys apply only while inside a configured subtree.
     if (nowInside && ctx.contextualRedactKeys.has(kLower)) {
       out[k] = MASK;
       continue;
@@ -129,10 +107,9 @@ function walk(value: unknown, ctx: ScrubContext, insideContext: boolean): unknow
 }
 
 /**
- * Header-style scrub helper. Reserved for consumer-supplied headers attached
- * to the payload (`context.data.headers` etc.) — **do not** apply this to the
- * outbound request headers the SDK itself builds (the auth `Authorization`
- * Bearer must reach the server intact).
+ * Reserved for consumer-supplied headers carried in `context.data.headers`.
+ * The SDK's own outbound headers must NOT go through this (the auth Bearer
+ * MUST reach the server intact).
  */
 export function scrubHeaders(
   headers: Record<string, string | undefined>,

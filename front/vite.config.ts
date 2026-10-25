@@ -1,34 +1,42 @@
-// SPDX-FileCopyrightText: 2026 DowarDev
-// SPDX-License-Identifier: AGPL-3.0-only
+/// <reference types="vitest" />
 
-import { defineConfig } from 'vite';
-import vue from '@vitejs/plugin-vue';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import vue from '@vitejs/plugin-vue'
+import { fileURLToPath } from 'node:url'
+import { dirname, resolve } from 'node:path'
+import { defineConfig, loadEnv } from 'vite'
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
-export default defineConfig({
-  plugins: [vue()],
-  resolve: {
-    alias: {
-      '@': resolve(__dirname, 'src'),
-    },
-  },
-  server: {
-    port: 5174, // different from the consumer app's vite default
-    proxy: {
-      // Proxy the API to the Laravel backend during local dev. The base URL
-      // is read from `VITE_GLITCHVY_API_URL` if set, otherwise defaults here.
-      '/api/glitchvy': {
-        target: process.env.VITE_GLITCHVY_PROXY_TARGET ?? 'http://localhost:8000',
-        changeOrigin: true,
+// https://vitejs.dev/config/
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+
+  return {
+    plugins: [
+      vue()
+    ],
+    resolve: {
+      alias: {
+        '@': resolve(__dirname, './src'),
       },
     },
-  },
-  build: {
-    outDir: 'dist',
-    sourcemap: false, // per spec, no source maps
-    target: 'es2020',
-  },
-});
+    server: {
+      // Proxy the whole /api tree to the Laravel backend so the SPA can
+      // call the SaaS API without CORS in dev. The dev server port itself
+      // comes from `ionic s -p=N` (handled by the Ionic CLI's built-in
+      // vue-vite handler), not from this config.
+      proxy: {
+        '/api': {
+          target: env.VITE_GLITCHVY_PROXY_TARGET || 'http://localhost:8000',
+          changeOrigin: true,
+          secure: false,
+        },
+      },
+    },
+    test: {
+      globals: true,
+      environment: 'jsdom',
+      setupFiles: ['./tests/setup.ts'],
+    },
+  }
+})

@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * Auto-capture layer: install (and remove) global hooks for `error`,
- * `unhandledrejection`, and `console.error`. The capture module does not
- * know how to send — it forwards to a callback registered by the public API.
+ * Auto-capture hooks: `window.onerror`, `unhandledrejection`, `console.error`.
+ * The capture module does not know how to send — it forwards to a callback
+ * registered by the public API.
  */
 
 import type { CaptureConfig, ErrorContext, ErrorLevel } from '../types.js';
@@ -32,7 +32,6 @@ function getGlobal(): Window | undefined {
 
 let installed = false;
 let prevConsoleError: typeof console.error | null = null;
-/** Best-effort storage so uninstall can remove the listeners we added. */
 let errorListener: ((ev: Event) => void) | null = null;
 let rejectionListener: ((ev: Event) => void) | null = null;
 let onlineListener: (() => void) | null = null;
@@ -45,7 +44,7 @@ export function installAutoCapture(
   installed = true;
 
   const win = getGlobal();
-  if (!win) return; // SSR/Node: nothing to install.
+  if (!win) return;
 
   const capture: Required<CaptureConfig> = {
     onerror: cfg?.onerror ?? true,
@@ -80,8 +79,6 @@ export function installAutoCapture(
   }
 
   if (capture.consoleError && typeof console !== 'undefined' && console.error) {
-    // Hold the original reference (no .bind — console.error doesn't rely on `this`)
-    // so uninstall restores the exact same function reference.
     prevConsoleError = console.error;
     console.error = (...args: unknown[]) => {
       const err =
@@ -112,7 +109,7 @@ export function uninstallAutoCapture(): void {
     if (errorListener) win.removeEventListener('error', errorListener);
     if (rejectionListener) win.removeEventListener('unhandledrejection', rejectionListener);
     if (onlineListener) win.removeEventListener('online', onlineListener);
-    if (prevConsoleError && typeof console !== 'undefined') {
+    if (prevConsoleError) {
       console.error = prevConsoleError;
     }
   }

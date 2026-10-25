@@ -25,7 +25,6 @@ describe('capture hooks', () => {
     setReportCallback(cb);
     installAutoCapture({ onerror: true });
     window.dispatchEvent(new ErrorEvent('error', { message: 'boom', error: new Error('boom') }));
-    // Microtask flush
     await new Promise((r) => setTimeout(r, 0));
     expect(cb).toHaveBeenCalled();
     const errArg = cb.mock.calls[0]?.[0];
@@ -69,7 +68,6 @@ describe('capture hooks', () => {
       .filter((t) => typeof t === 'string');
     expect(registered).not.toContain('error');
     expect(registered).not.toContain('unhandledrejection');
-    // console.error is untouched (not patched).
     expect(console.error).toBe(consoleRef);
     expect(cb).not.toHaveBeenCalled();
     addEventListenerSpy.mockRestore();
@@ -80,10 +78,8 @@ describe('capture hooks', () => {
     setReportCallback(cb);
     const original = console.error;
     installAutoCapture({});
-    // After install, console.error should be a different reference.
     expect(console.error).not.toBe(original);
     uninstallAutoCapture();
-    // After uninstall, back to original.
     expect(console.error).toBe(original);
     // eslint-disable-next-line no-console
     console.error('after');
@@ -107,8 +103,6 @@ describe('capture hooks', () => {
     installAutoCapture({});
     window.dispatchEvent(new ErrorEvent('error', { message: 'x', error: new Error('x') }));
     await new Promise((r) => setTimeout(r, 0));
-    // Even if the listeners themselves stack, the callback is the same fn
-    // — vitest counts calls once, so each dispatch fires once.
     expect(cb).toHaveBeenCalledTimes(1);
   });
 });
