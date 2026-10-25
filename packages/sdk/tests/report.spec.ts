@@ -141,6 +141,39 @@ describe('sendOnce', () => {
     expect((init.headers as Record<string, string>)['X-Glitchvy-Event-Id']).toBe(event.eventId);
     expect(init.body).toBe(JSON.stringify(event));
   });
+
+  it('keeps keepalive for a payload under the 64KB cap', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchMock);
+    await sendOnce(makeEvent(), BASE_CONFIG);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.keepalive).toBe(true);
+  });
+
+  it('trims the breadcrumb trail so a huge payload stays under the keepalive cap', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchMock);
+    const event = makeEvent();
+    event.breadcrumbs = Array.from({ length: 200 }, (_, i) => ({
+      message: `crumb-${i}-${'x'.repeat(1000)}`,
+      timestamp: '2026-01-01T00:00:00.000Z',
+    }));
+    await sendOnce(event, BASE_CONFIG);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = init.body as string;
+    expect(new TextEncoder().encode(body).length).toBeLessThanOrEqual(64 * 1024);
+    expect(init.keepalive).toBe(true);
+  });
+
+  it('drops keepalive when the payload cannot be trimmed under the cap', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchMock);
+    const event = makeEvent();
+    event.context.data = { blob: 'y'.repeat(100 * 1024) };
+    await sendOnce(event, BASE_CONFIG);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.keepalive).toBe(false);
+  });
 });
 
 describe('send', () => {
@@ -211,5 +244,34 @@ describe('flushQueue', () => {
     const stats = await flushQueue(BASE_CONFIG);
     expect(stats).toEqual({ sent: 0, requeued: 0 });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('retries a queued event with the configured retry budget', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 503 });
+    vi.stubGlobal('fetch', fetchMock);
+    await queue.enqueue(makeEvent('a'));
+    const stats = await flushQueue({ ...BASE_CONFIG, maxRetries: 1, retryBaseMs: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(stats.sent).toBe(0);
+    expect(stats.requeued).toBe(1);
+  });
+
+  it('does not retry a queued event on a non-retryable status', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 400 });
+    vi.stubGlobal('fetch', fetchMock);
+    await queue.enqueue(makeEvent('a'));
+    await flushQueue({ ...BASE_CONFIG, maxRetries: 3, retryBaseMs: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not grow the queue past maxQueueSize when the backend keeps failing', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+    await queue.enqueue(makeEvent('a'));
+    await queue.enqueue(makeEvent('b'));
+    await queue.enqueue(makeEvent('c'));
+    const stats = await flushQueue({ ...BASE_CONFIG, maxQueueSize: 1, maxRetries: 0 });
+    expect(stats.requeued).toBe(1);
+    expect(await queue.size()).toBe(1);
   });
 });
