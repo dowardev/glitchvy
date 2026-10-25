@@ -74,12 +74,21 @@ describe('normalizeError', () => {
     expect(out?.stack).toBe('s');
   });
 
-  it('circular object → falls back to String()', () => {
+  it('circular object → describes its own keys instead of "[object Object]"', () => {
     const circ: Record<string, unknown> = { name: 'C' };
     circ.self = circ;
     const out = normalizeError(circ);
     expect(out?.name).toBe('C');
-    expect(typeof out?.message).toBe('string');
+    expect(out?.message).toContain('self:');
+    expect(out?.message).not.toBe('[object Object]');
+  });
+
+  it('circular object without a message → keeps the key/value summary', () => {
+    const circ: Record<string, unknown> = { code: 'E_X' };
+    circ.self = circ;
+    const out = normalizeError(circ);
+    expect(out?.name).toBe('Error');
+    expect(out?.message).toContain('code: E_X');
   });
 
   it('number/boolean → Error shape', () => {

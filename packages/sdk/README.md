@@ -77,12 +77,13 @@ const onReport = async () => {
 | Symbol | Kind | Description |
 |---|---|---|
 | `initErrorReporter(config)` | fn | Bootstraps the SDK. Idempotent; safe to call once. |
-| `reportError(errorOrMessage, context?)` | fn (async) | Reports an error and returns a `Promise`. Failures are queued, not thrown. |
+| `reportError(errorOrMessage, context?)` | fn (async) | Reports an error and returns a `Promise`. Failures are queued, not thrown. Called before `initErrorReporter`, the event is buffered (up to 20) and sent once the SDK is initialized. |
 | `setUserContext(partial)` | fn | Adds/overrides user context fields. |
 | `clearUserContext()` | fn | Clears the user context. |
 | `addBreadcrumb(message, data?)` | fn | Trail of events leading to an error (manual). |
 | `flush()` | fn | Forces an immediate drain of the offline queue. |
-| `getQueueSize()` | fn | Number of events currently persisted offline. |
+| `getQueueSize()` | fn | Number of events currently persisted offline. A `0` is ambiguous (it also means the queue could not be read) — use `getQueueStatus()` when that matters. |
+| `getQueueStatus()` | fn (async) | `{ size, readable, error? }` for the offline queue. `readable: false` means IndexedDB could not be read at all. |
 | `shutdown()` | fn | Tears down auto-capture hooks and flushes. Mainly for tests / HMR. |
 
 ## Configuration

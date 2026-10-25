@@ -27,6 +27,21 @@ const KEEPALIVE_BODY_LIMIT_BYTES = 64 * 1024;
 
 export type SendResult = 'sent' | 'queued' | 'dropped';
 
+function describeUnserializable(value: Record<string, unknown>): string {
+  const keys = Object.keys(value);
+  if (keys.length === 0) return '[object Object]';
+  const parts = keys.slice(0, 10).map((k) => {
+    let rendered: string;
+    try {
+      rendered = typeof value[k] === 'string' ? (value[k] as string) : String(value[k]);
+    } catch {
+      rendered = '[unserializable]';
+    }
+    return `${k}: ${rendered}`;
+  });
+  return `[${parts.join(', ')}]`;
+}
+
 export function normalizeError(err: unknown):
   | { name: string; message: string; stack?: string; type?: string }
   | null {
@@ -53,7 +68,7 @@ export function normalizeError(err: unknown):
     try {
       message = typeof r.message === 'string' ? r.message : JSON.stringify(err);
     } catch {
-      message = String(err);
+      message = describeUnserializable(r);
     }
     const out: { name: string; message: string; stack?: string; type?: string } = {
       name: typeof r.name === 'string' ? r.name : 'Error',
