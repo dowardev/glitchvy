@@ -12,6 +12,8 @@ import type { ErrorContext, ErrorLevel, InitConfig, ReportEvent } from '../types
 import { readPlatform, readRoute, readUserAgent } from './env.js';
 import { scrub, buildScrubContext } from './scrub.js';
 import type { ScrubContext } from './scrub.js';
+import { toIngestPayload } from './ingest.js';
+import type { IngestPayload } from './ingest.js';
 import { getState } from './state.js';
 import * as queue from './queue.js';
 
@@ -82,12 +84,30 @@ export function normalizeError(err: unknown):
   return { name: 'Error', message: String(err) };
 }
 
+/**
+ * RFC 4122 version 4 UUID.
+ *
+ * `crypto.randomUUID` is only available in secure contexts, so a plain-HTTP
+ * consumer app would fall back to a non-UUID id — which the ingestion
+ * endpoint rejects (`event_id` must be a valid UUID).
+ */
 function newEventId(): string {
-  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  const c = (globalThis as { crypto?: Crypto }).crypto;
   if (c && typeof c.randomUUID === 'function') {
     return c.randomUUID();
   }
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const bytes = new Uint8Array(16);
+  if (c && typeof c.getRandomValues === 'function') {
+    c.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 /** Build a {@link ReportEvent} from a thrown value and optional context. */
@@ -156,7 +176,6 @@ function utf8ByteLength(value: string): number {
 }
 
 interface FittedPayload {
-  event: ReportEvent;
   body: string;
   keepalive: boolean;
 }
@@ -167,27 +186,29 @@ interface FittedPayload {
  * if the payload still does not fit, `keepalive` is dropped so the request
  * at least has a chance to complete normally.
  */
-function fitForKeepalive(event: ReportEvent): FittedPayload {
-  const body = JSON.stringify(event);
+function fitForKeepalive(payload: IngestPayload): FittedPayload {
+  const body = JSON.stringify(payload);
   if (utf8ByteLength(body) <= KEEPALIVE_BODY_LIMIT_BYTES) {
-    return { event, body, keepalive: true };
+    return { body, keepalive: true };
   }
 
-  const breadcrumbs = event.breadcrumbs ?? [];
+  const breadcrumbs = payload.breadcrumbs ?? [];
   let keep = breadcrumbs.length;
   while (keep > 0) {
     keep = Math.floor(keep / 2);
-    const trimmed: ReportEvent = { ...event, breadcrumbs: breadcrumbs.slice(breadcrumbs.length - keep) };
+    const trimmed: IngestPayload = {
+      ...payload,
+      breadcrumbs: breadcrumbs.slice(breadcrumbs.length - keep),
+    };
     const trimmedBody = JSON.stringify(trimmed);
     if (utf8ByteLength(trimmedBody) <= KEEPALIVE_BODY_LIMIT_BYTES) {
-      return { event: trimmed, body: trimmedBody, keepalive: true };
+      return { body: trimmedBody, keepalive: true };
     }
   }
 
-  const stripped: ReportEvent = { ...event, breadcrumbs: [] };
+  const stripped: IngestPayload = { ...payload, breadcrumbs: [] };
   const strippedBody = JSON.stringify(stripped);
   return {
-    event: stripped,
     body: strippedBody,
     keepalive: utf8ByteLength(strippedBody) <= KEEPALIVE_BODY_LIMIT_BYTES,
   };
@@ -200,7 +221,7 @@ export async function sendOnce(event: ReportEvent, config: InitConfig): Promise<
     'Authorization': `Bearer ${config.apiKey}`,
     'X-Glitchvy-Event-Id': event.eventId,
   };
-  const payload = fitForKeepalive(event);
+  const payload = fitForKeepalive(toIngestPayload(event));
   return fetch(config.ingestionUrl, {
     method: 'POST',
     headers,
@@ -208,7 +229,6 @@ export async function sendOnce(event: ReportEvent, config: InitConfig): Promise<
     keepalive: payload.keepalive,
   });
 }
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

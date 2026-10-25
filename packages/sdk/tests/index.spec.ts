@@ -66,8 +66,8 @@ describe('initErrorReporter', () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    const body = JSON.parse(init.body as string) as { error: { message: string } };
-    expect(body.error.message).toBe('early-boot');
+    const body = JSON.parse(init.body as string) as { error_message: string };
+    expect(body.error_message).toBe('early-boot');
     originalWarn.mockRestore();
   });
 });
@@ -82,11 +82,12 @@ describe('reportError', () => {
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(init.body as string) as Record<string, unknown>;
     expect(body).toMatchObject({
-      appVersion: '0.1.0',
+      app_version: '0.1.0',
       environment: 'test',
       level: 'error',
-      error: { name: 'Error', message: 'hi' },
-      context: { entityType: 'budget' },
+      error_name: 'Error',
+      error_message: 'hi',
+      entity_type: 'budget',
     });
     expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer gvy_test');
   });
@@ -100,11 +101,11 @@ describe('reportError', () => {
     });
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(init.body as string) as {
-      context: { data: { entry: { name: string; qty: number }; balance: number } };
+      data: { entry: { name: string; qty: number }; balance: number };
     };
-    expect(body.context.data.entry.name).toBe('[REDACTED]');
-    expect(body.context.data.entry.qty).toBe(2);
-    expect(body.context.data.balance).toBe(100);
+    expect(body.data.entry.name).toBe('[REDACTED]');
+    expect(body.data.entry.qty).toBe(2);
+    expect(body.data.balance).toBe(100);
   });
 
   it('redacts a JWT bearer token from the outgoing payload', async () => {
@@ -118,8 +119,8 @@ describe('reportError', () => {
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const raw = init.body as string;
     expect(raw).not.toContain('abc+/def==');
-    const body = JSON.parse(raw) as { context: { data: { headers: { authorization: string } } } };
-    expect(body.context.data.headers.authorization).toBe('Bearer [REDACTED]');
+    const body = JSON.parse(raw) as { data: { headers: { authorization: string } } };
+    expect(body.data.headers.authorization).toBe('Bearer [REDACTED]');
   });
 
   it('attaches user context + breadcrumb trail', async () => {
@@ -132,10 +133,10 @@ describe('reportError', () => {
     await reportError(new Error('hi'));
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(init.body as string) as {
-      user: Record<string, unknown>;
+      user_payload: Record<string, unknown>;
       breadcrumbs: { message: string }[];
     };
-    expect(body.user).toEqual({ userId: '42', tier: 'pro' });
+    expect(body.user_payload).toEqual({ userId: '42', tier: 'pro' });
     expect(body.breadcrumbs.map((b) => b.message)).toEqual(['opened form', 'clicked save']);
   });
 
