@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The SDK now redacts real bearer tokens (JWT, base64), which could previously be stored in the error panel.
 - Errors reported before the SDK is initialized are no longer lost.
 - The offline queue respects its configured size and stops retrying forever.
+- The SDK now sends the data format the service accepts: until now every report was rejected and no error reached the panel.
 
 ### Security
 
