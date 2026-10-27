@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-27
+
 ### Added
 
 - Initial release of the framework-agnostic TypeScript SDK.
@@ -50,6 +52,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The length-limited fields of the ingest payload are truncated to the limits the endpoint enforces (`environment`, `app_version`, `route`, `error_name`, `error_type`, `entity_type`, `operation`).
 
-## [0.0.0]
-
-> Not released.

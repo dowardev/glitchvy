@@ -1,5 +1,5 @@
 {
-  "name": "glitchvy",
+  "name": "@dowardev/glitchvy",
   "version": "0.1.0",
   "description": "Minimalist error reporter SDK. Framework-agnostic. POSTs errors to your glitchvy SaaS ingestion URL.",
   "license": "AGPL-3.0-only",

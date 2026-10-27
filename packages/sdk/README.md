@@ -1,4 +1,4 @@
-# `glitchvy` (SDK)
+# `@dowardev/glitchvy` (SDK)
 
 > Minimalist error reporter SDK. Framework-agnostic. POSTs errors to your glitchvy SaaS ingestion URL.
 > You wire it into your app's UI — it has **no UI of its own**.
@@ -27,7 +27,7 @@ pnpm add "workspace:*" --filter <your-app>
 
 ```ts
 // main.ts (or wherever you bootstrap the app)
-import { initErrorReporter, reportError, setUserContext } from 'glitchvy';
+import { initErrorReporter, reportError, setUserContext } from '@dowardev/glitchvy';
 
 initErrorReporter({
   ingestionUrl: 'https://errors.dowar.xyz/api/glitchvy/errors', // SaaS URL
@@ -61,7 +61,7 @@ In a Vue 3 + Ionic app:
 </template>
 
 <script setup lang="ts">
-import { reportError } from 'glitchvy';
+import { reportError } from '@dowardev/glitchvy';
 const onReport = async () => {
   try {
     throw new Error('Manually reported from the demo button');

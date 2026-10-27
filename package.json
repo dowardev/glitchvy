@@ -15,7 +15,7 @@
     "test:laravel": "composer -C back test",
     "build": "pnpm -r --if-present build",
     "clean": "pnpm -r --if-present clean",
-    "dev:sdk": "pnpm --filter glitchvy dev",
+    "dev:sdk": "pnpm --filter @dowardev/glitchvy dev",
     "dev:admin": "pnpm --filter glitchvy-admin dev"
   },
   "spdx": {

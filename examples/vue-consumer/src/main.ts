@@ -9,7 +9,7 @@ import '@ionic/vue/css/normalize.css';
 import '@ionic/vue/css/structure.css';
 import '@ionic/vue/css/typography.css';
 
-import { initErrorReporter, setUserContext } from 'glitchvy';
+import { initErrorReporter, setUserContext } from '@dowardev/glitchvy';
 import App from './App.vue';
 
 initErrorReporter({

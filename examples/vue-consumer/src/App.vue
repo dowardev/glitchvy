@@ -31,7 +31,7 @@ import {
   IonContent,
   IonButton,
 } from '@ionic/vue';
-import { reportError } from 'glitchvy';
+import { reportError } from '@dowardev/glitchvy';
 
 async function onReport(): Promise<void> {
   try {

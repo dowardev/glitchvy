@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 DowarDev
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { initErrorReporter, reportError, setUserContext, addBreadcrumb } from 'glitchvy';
+import { initErrorReporter, reportError, setUserContext, addBreadcrumb } from '@dowardev/glitchvy';
 
 // In a real app these come from your build/runtime config.
 const API_KEY = import.meta.env?.VITE_GLITCHVY_API_KEY

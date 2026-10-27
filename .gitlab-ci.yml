@@ -32,7 +32,7 @@ lint:sdk:
   before_script:
     - corepack enable
   script:
-    - pnpm --filter glitchvy lint || true
+    - pnpm --filter @dowardev/glitchvy lint || true
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
@@ -63,7 +63,7 @@ test:sdk:
     - corepack enable
     - pnpm install --frozen-lockfile || pnpm install
   script:
-    - pnpm --filter glitchvy test:run
+    - pnpm --filter @dowardev/glitchvy test:run
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
@@ -125,7 +125,7 @@ build:packages:
     - corepack enable
     - pnpm install --frozen-lockfile || pnpm install
   script:
-    - pnpm --filter glitchvy build
+    - pnpm --filter @dowardev/glitchvy build
     - pnpm --filter glitchvy-admin build
   artifacts:
     paths:
