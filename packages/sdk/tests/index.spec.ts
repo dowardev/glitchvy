@@ -6,6 +6,7 @@ import {
   addBreadcrumb,
   flush,
   getQueueSize,
+  getQueueStatus,
   initErrorReporter,
   reportError,
   setUserContext,
@@ -46,11 +47,41 @@ describe('initErrorReporter', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('reportError before init warns and drops the event', async () => {
+  it('reportError before init warns and buffers the event until init', async () => {
     const originalWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     await reportError('orphan');
     expect(originalWarn).toHaveBeenCalled();
     expect(await queue.size()).toBe(0);
+    originalWarn.mockRestore();
+  });
+
+  it('sends the buffered pre-init event once the SDK is initialized', async () => {
+    const originalWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetchMock);
+    await reportError(new Error('early-boot'));
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    initErrorReporter(CFG);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as { error: { message: string } };
+    expect(body.error.message).toBe('early-boot');
+    originalWarn.mockRestore();
+  });
+  it('delivers the buffered pre-init event even if shutdown() runs right after init', async () => {
+    const originalWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetchMock);
+    await reportError(new Error('early-boot'));
+    initErrorReporter(CFG);
+    shutdown();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as { error: { message: string } };
+    expect(body.error.message).toBe('early-boot');
     originalWarn.mockRestore();
   });
 });
@@ -88,6 +119,21 @@ describe('reportError', () => {
     expect(body.context.data.entry.name).toBe('[REDACTED]');
     expect(body.context.data.entry.qty).toBe(2);
     expect(body.context.data.balance).toBe(100);
+  });
+
+  it('redacts a JWT bearer token from the outgoing payload', async () => {
+    initErrorReporter(CFG);
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetchMock);
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.abc+/def==';
+    await reportError(new Error('hi'), {
+      data: { headers: { authorization: `Bearer ${jwt}` } },
+    });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const raw = init.body as string;
+    expect(raw).not.toContain('abc+/def==');
+    const body = JSON.parse(raw) as { context: { data: { headers: { authorization: string } } } };
+    expect(body.context.data.headers.authorization).toBe('Bearer [REDACTED]');
   });
 
   it('attaches user context + breadcrumb trail', async () => {
@@ -137,6 +183,29 @@ describe('flush / getQueueSize', () => {
   it('getQueueSize returns 0 on a healthy queue', async () => {
     initErrorReporter(CFG);
     expect(await getQueueSize()).toBe(0);
+  });
+
+  it('getQueueStatus reports an empty queue as readable', async () => {
+    initErrorReporter(CFG);
+    const status = await getQueueStatus();
+    expect(status).toEqual({ size: 0, readable: true });
+  });
+
+  it('getQueueStatus reports an unreadable queue instead of masking it', async () => {
+    initErrorReporter(CFG);
+    queue.__resetDb();
+    const original = globalThis.indexedDB;
+    // @ts-expect-error - simulating a runtime without IndexedDB
+    delete globalThis.indexedDB;
+    try {
+      const status = await getQueueStatus();
+      expect(status.readable).toBe(false);
+      expect(status.size).toBe(0);
+      expect(typeof status.error).toBe('string');
+    } finally {
+      globalThis.indexedDB = original;
+      queue.__resetDb();
+    }
   });
 });
 

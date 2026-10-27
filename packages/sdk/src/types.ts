@@ -62,6 +62,21 @@ export interface Breadcrumb {
   data?: Record<string, unknown>;
 }
 
+/**
+ * State of the offline queue.
+ *
+ * `readable: false` means the queue could not be read at all (IndexedDB
+ * unavailable, blocked or corrupted) — `size` is then meaningless, not zero.
+ */
+export interface QueueStatus {
+  /** Number of events persisted in the queue. Only meaningful when `readable` is true. */
+  size: number;
+  /** False when the queue could not be read. */
+  readable: boolean;
+  /** Why the queue could not be read, when `readable` is false. */
+  error?: string;
+}
+
 export interface ReportEvent {
   eventId: string;
   timestamp: string;

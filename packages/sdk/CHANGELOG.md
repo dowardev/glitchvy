@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Bearer tokens found in string values are masked.
 - Offline queue backed by IndexedDB, flushed on the `online` event, with exponential-backoff retry (`maxRetries`, `retryBaseMs`).
 - Dual ESM + CJS build with TypeScript declarations shipped in the package.
+- `getQueueStatus()` — `{ size, readable, error? }` for the offline queue. `readable: false` means IndexedDB could not be read, something `getQueueSize()` cannot express (it answers `0` for both "empty" and "unreadable").
+- Reports made before `initErrorReporter()` are buffered (up to 20) and sent as soon as the SDK is initialized, instead of being dropped.
 
 ### Changed
 
@@ -31,6 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - `ScreenshotMeta`. It was exported from the public API surface but referenced nowhere in the source or the tests, and described a screenshot-upload feature the SDK does not implement.
+
+### Fixed
+
+- Bearer tokens are redacted again. The redaction pattern only matched `[A-Za-z0-9._-]`, so a real JWT or base64 token (with `+`, `/` and `=`) was not masked and could reach the dashboard; the keyword check was also case-sensitive while the pattern was not.
+- The offline queue cannot grow past `maxQueueSize` while flushing: re-queued failures are checked against the cap.
+- A queued event is retried with the configured `maxRetries` / `retryBaseMs` when the queue is flushed, instead of a single attempt.
+- A payload above the ~64KB `keepalive` limit is trimmed (oldest breadcrumbs first) instead of failing silently in the browser.
+- A queue flush runs under a wall-clock budget; the events it could not attempt go back to the queue, so nothing is lost.
+- A non-integer `entityId` is preserved as `entity_id_raw` in the context data instead of being dropped.
+- A thrown non-Error value with a circular reference reports its own keys instead of `[object Object]`.
 
 ## [0.0.0]
 

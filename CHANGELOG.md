@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **`glitchvy`** — error reporting SaaS (Sentry-like). Three shipped entities, each with its own changelog:
 
 - **`glitchvy`** SDK (npm, framework-agnostic TypeScript) — `packages/sdk/`
-  - `initErrorReporter(config)`, `reportError(err, context, level)`, `setUserContext` / `clearUserContext`, `addBreadcrumb`, `flush`, `getQueueSize`, `shutdown`
+  - `initErrorReporter(config)`, `reportError(err, context, level)`, `setUserContext` / `clearUserContext`, `addBreadcrumb`, `flush`, `getQueueSize`, `getQueueStatus`, `shutdown`
   - Auto-capture: `window.onerror`, `unhandledrejection`, `console.error` patch
   - Scrub: default PII globals (passwords, tokens, Authorization headers) + per-context `redactFields` inside `redactContexts`
   - Offline queue (IndexedDB) with `online`-event flush and exponential-backoff retry
@@ -47,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - API key authentication checks every key sharing the queried prefix, and `api_keys.key_prefix` is now unique, so two colliding keys can no longer make one of them unusable.
 - Ingesting the same `event_id` twice is deduplicated instead of crashing, and `event_reports.event_id` can no longer be null.
 - Creating a project no longer fails with a 500 when two requests race for the same name.
+- The SDK now redacts real bearer tokens (JWT, base64), which could previously be stored in the error panel.
+- Errors reported before the SDK is initialized are no longer lost.
+- The offline queue respects its configured size and stops retrying forever.
 
 ### Security
 

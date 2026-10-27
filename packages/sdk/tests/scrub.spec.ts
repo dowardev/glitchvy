@@ -82,6 +82,35 @@ describe('scrub', () => {
     expect(out.msg).toBe('failed: Bearer [REDACTED] something else');
   });
 
+  it('redacts a JWT bearer token with base64 padding and +/ characters', () => {
+    const ctx = buildScrubContext();
+    const token = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.abc+/def==';
+    const out = scrub(
+      { msg: `failed: Bearer ${token} end` },
+      ctx,
+    ) as Record<string, string>;
+    expect(out.msg).toBe('failed: Bearer [REDACTED] end');
+    expect(out.msg).not.toContain('abc+/def==');
+  });
+
+  it('redacts a lowercase bearer token', () => {
+    const ctx = buildScrubContext();
+    const out = scrub(
+      { msg: 'failed: bearer eyJhbGciOiJIUzI1NiJ9.abc+/def==' },
+      ctx,
+    ) as Record<string, string>;
+    expect(out.msg).toBe('failed: bearer [REDACTED]');
+  });
+
+  it('does not swallow surrounding quotes when redacting a bearer token', () => {
+    const ctx = buildScrubContext();
+    const out = scrub(
+      { msg: 'header was "Bearer eyJhbGciOiJIUzI1NiJ9.abc+/def==" and failed' },
+      ctx,
+    ) as Record<string, string>;
+    expect(out.msg).toBe('header was "Bearer [REDACTED]" and failed');
+  });
+
   it('walks arrays element-wise', () => {
     const ctx = buildScrubContext();
     const out = scrub(

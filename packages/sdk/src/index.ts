@@ -26,11 +26,14 @@ import {
   uninstallAutoCapture,
 } from './core/capture.js';
 import * as queue from './core/queue.js';
-import type { Breadcrumb, ErrorContext, ErrorLevel, InitConfig } from './types.js';
+import type { ScrubContext } from './core/scrub.js';
+import type { Breadcrumb, ErrorContext, ErrorLevel, InitConfig, QueueStatus } from './types.js';
 
 const DEFAULT_MAX_QUEUE = 100;
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_RETRY_BASE_MS = 1_000;
+/** How many events reported before init are kept in memory until init happens. */
+const MAX_PENDING_BEFORE_INIT = 20;
 
 const DEFAULT_CAPTURE = {
   onerror: true,
@@ -39,6 +42,18 @@ const DEFAULT_CAPTURE = {
 } as const;
 
 let initialized = false;
+
+/**
+ * Events reported before `initErrorReporter` was called. They are kept (up to
+ * a small cap) and sent as soon as the SDK is initialized, instead of being
+ * dropped.
+ */
+interface PendingReport {
+  err: unknown;
+  context?: ErrorContext;
+  level: ErrorLevel;
+}
+let pendingBeforeInit: PendingReport[] = [];
 
 function applyDefaults(config: InitConfig): InitConfig {
   return {
@@ -76,6 +91,27 @@ export function initErrorReporter(config: InitConfig): void {
   installAutoCapture(cfg.capture, () => {
     void flush();
   });
+
+  // Send whatever was reported before init instead of losing it. The config
+  // captured here is used on purpose: a `shutdown()` racing the drain must
+  // not send those events back to the pre-init buffer.
+  const pending = pendingBeforeInit;
+  pendingBeforeInit = [];
+  for (const p of pending) {
+    void deliver(p.err, p.context, p.level, cfg, state.scrubCtx);
+  }
+}
+
+/** Build and send one event with an explicit config. */
+async function deliver(
+  err: unknown,
+  context: ErrorContext | undefined,
+  level: ErrorLevel,
+  config: InitConfig,
+  scrubCtx: ScrubContext,
+): Promise<void> {
+  const event = buildEvent(config, scrubCtx, err, context, level);
+  await send(event, config);
 }
 
 /**
@@ -92,7 +128,10 @@ export async function reportError(
   const state = getState();
   if (!state.config || !state.scrubCtx) {
     if (typeof console !== 'undefined') {
-      console.warn('[glitchvy] reportError called before initErrorReporter; event dropped.');
+      console.warn('[glitchvy] reportError called before initErrorReporter; event buffered until init.');
+    }
+    if (pendingBeforeInit.length < MAX_PENDING_BEFORE_INIT) {
+      pendingBeforeInit.push({ err, context, level });
     }
     return;
   }
@@ -132,12 +171,31 @@ export async function flush(): Promise<void> {
   await flushQueue(state.config);
 }
 
-/** Number of events currently persisted in IndexedDB. Returns 0 if uninitialized. */
+/**
+ * Number of events currently persisted in IndexedDB. Returns 0 if uninitialized.
+ *
+ * A `0` is ambiguous: it also means "the queue could not be read". Use
+ * {@link getQueueStatus} when the difference matters.
+ */
 export async function getQueueSize(): Promise<number> {
   try {
     return await queue.size();
   } catch {
     return 0;
+  }
+}
+
+/**
+ * State of the offline queue, distinguishing an empty queue from a queue
+ * that could not be read (IndexedDB unavailable, blocked, corrupted).
+ */
+export async function getQueueStatus(): Promise<QueueStatus> {
+  try {
+    const size = await queue.size();
+    return { size, readable: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { size: 0, readable: false, error: message };
   }
 }
 
@@ -149,6 +207,7 @@ export function shutdown(): void {
   uninstallAutoCapture();
   clearReportCallback();
   resetState();
+  pendingBeforeInit = [];
   initialized = false;
 }
 
@@ -160,4 +219,5 @@ export type {
   ScrubRules,
   ReportEvent,
   Breadcrumb,
+  QueueStatus,
 } from './types.js';

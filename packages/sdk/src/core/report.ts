@@ -18,7 +18,44 @@ import * as queue from './queue.js';
 /** Status codes we consider worth retrying. */
 const RETRYABLE_STATUS = new Set<number>([408, 425, 429, 500, 502, 503, 504]);
 
+/**
+ * Browsers cap `keepalive` request bodies at roughly 64KB. A body above the
+ * cap makes the request fail silently, so the event is lost even though the
+ * SDK believes it was sent.
+ */
+const KEEPALIVE_BODY_LIMIT_BYTES = 64 * 1024;
+
+/**
+ * Total wall-clock budget for one queue flush. Without it, the per-event
+ * retry budget multiplies by the queue length: 100 queued events against a
+ * dead backend would take minutes and fire hundreds of requests.
+ */
+const FLUSH_TIME_BUDGET_MS = 30_000;
+
+/** Current flush budget. Mutable only through the test-only helper below. */
+let flushBudgetMs = FLUSH_TIME_BUDGET_MS;
+
+/** Test-only helper. Production code never calls this. */
+export function __setFlushBudgetMs(ms: number): void {
+  flushBudgetMs = ms;
+}
+
 export type SendResult = 'sent' | 'queued' | 'dropped';
+
+function describeUnserializable(value: Record<string, unknown>): string {
+  const keys = Object.keys(value);
+  if (keys.length === 0) return '[object Object]';
+  const parts = keys.slice(0, 10).map((k) => {
+    let rendered: string;
+    try {
+      rendered = typeof value[k] === 'string' ? (value[k] as string) : String(value[k]);
+    } catch {
+      rendered = '[unserializable]';
+    }
+    return `${k}: ${rendered}`;
+  });
+  return `[${parts.join(', ')}]`;
+}
 
 export function normalizeError(err: unknown):
   | { name: string; message: string; stack?: string; type?: string }
@@ -46,7 +83,7 @@ export function normalizeError(err: unknown):
     try {
       message = typeof r.message === 'string' ? r.message : JSON.stringify(err);
     } catch {
-      message = String(err);
+      message = describeUnserializable(r);
     }
     const out: { name: string; message: string; stack?: string; type?: string } = {
       name: typeof r.name === 'string' ? r.name : 'Error',
@@ -69,6 +106,13 @@ function newEventId(): string {
 }
 
 /** Build a {@link ReportEvent} from a thrown value and optional context. */
+/** True when the value can be stored as an integer column. */
+function isIntegerLike(value: unknown): boolean {
+  if (typeof value === 'number') return Number.isInteger(value);
+  if (typeof value === 'string') return /^-?\d+$/.test(value.trim());
+  return false;
+}
+
 export function buildEvent(
   config: InitConfig,
   scrubCtx: ScrubContext,
@@ -107,6 +151,18 @@ export function buildEvent(
     event.user = { ...state.user };
   }
 
+  // The ingestion endpoint stores `entity_id` in an integer column, so a
+  // non-numeric id cannot be sent as one. It is preserved in `data` instead
+  // of being dropped, and it goes through the same scrubbing as the rest of
+  // the payload.
+  if (event.context.entityId !== undefined && !isIntegerLike(event.context.entityId)) {
+    const data = { ...(event.context.data ?? {}) } as Record<string, unknown>;
+    if (!('entity_id_raw' in data)) {
+      data.entity_id_raw = event.context.entityId;
+    }
+    event.context.data = data;
+  }
+
   if (event.context.data) {
     event.context.data = scrub(event.context.data, scrubCtx) as Record<string, unknown>;
   }
@@ -129,6 +185,48 @@ export function buildEvent(
   return event;
 }
 
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
+interface FittedPayload {
+  event: ReportEvent;
+  body: string;
+  keepalive: boolean;
+}
+
+/**
+ * Fit the payload under the `keepalive` body cap. The breadcrumb trail is
+ * trimmed oldest-first because it is the only unbounded part of an event;
+ * if the payload still does not fit, `keepalive` is dropped so the request
+ * at least has a chance to complete normally.
+ */
+function fitForKeepalive(event: ReportEvent): FittedPayload {
+  const body = JSON.stringify(event);
+  if (utf8ByteLength(body) <= KEEPALIVE_BODY_LIMIT_BYTES) {
+    return { event, body, keepalive: true };
+  }
+
+  const breadcrumbs = event.breadcrumbs ?? [];
+  let keep = breadcrumbs.length;
+  while (keep > 0) {
+    keep = Math.floor(keep / 2);
+    const trimmed: ReportEvent = { ...event, breadcrumbs: breadcrumbs.slice(breadcrumbs.length - keep) };
+    const trimmedBody = JSON.stringify(trimmed);
+    if (utf8ByteLength(trimmedBody) <= KEEPALIVE_BODY_LIMIT_BYTES) {
+      return { event: trimmed, body: trimmedBody, keepalive: true };
+    }
+  }
+
+  const stripped: ReportEvent = { ...event, breadcrumbs: [] };
+  const strippedBody = JSON.stringify(stripped);
+  return {
+    event: stripped,
+    body: strippedBody,
+    keepalive: utf8ByteLength(strippedBody) <= KEEPALIVE_BODY_LIMIT_BYTES,
+  };
+}
+
 /** Single fetch attempt. Throws on network failure or returns the response. */
 export async function sendOnce(event: ReportEvent, config: InitConfig): Promise<Response> {
   const headers: Record<string, string> = {
@@ -136,16 +234,51 @@ export async function sendOnce(event: ReportEvent, config: InitConfig): Promise<
     'Authorization': `Bearer ${config.apiKey}`,
     'X-Glitchvy-Event-Id': event.eventId,
   };
+  const payload = fitForKeepalive(event);
   return fetch(config.ingestionUrl, {
     method: 'POST',
     headers,
-    body: JSON.stringify(event),
-    keepalive: true,
+    body: payload.body,
+    keepalive: payload.keepalive,
   });
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Send an event, retrying with exponential backoff on retryable status codes
+ * and network failures. Returns `true` when the event was accepted.
+ *
+ * When a `deadline` (absolute epoch ms) is given, no attempt starts after it
+ * and no sleep outlives it.
+ */
+async function attemptSend(
+  event: ReportEvent,
+  config: InitConfig,
+  maxRetries: number,
+  baseMs: number,
+  deadline?: number,
+): Promise<boolean> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (deadline !== undefined && Date.now() >= deadline) return false;
+    try {
+      const res = await sendOnce(event, config);
+      if (res.ok) return true;
+      if (!RETRYABLE_STATUS.has(res.status)) return false;
+    } catch (_err) {
+      if (attempt >= maxRetries) return false;
+    }
+    if (attempt < maxRetries) {
+      let delay = baseMs * Math.pow(2, attempt);
+      if (deadline !== undefined) {
+        delay = Math.min(delay, Math.max(0, deadline - Date.now()));
+      }
+      if (delay > 0) await sleep(delay);
+    }
+  }
+  return false;
 }
 
 /**
@@ -157,21 +290,8 @@ export async function send(event: ReportEvent, config: InitConfig): Promise<Send
   const maxRetries = config.maxRetries ?? 3;
   const baseMs = config.retryBaseMs ?? 1000;
 
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      const res = await sendOnce(event, config);
-      if (res.ok) return 'sent';
-      if (!RETRYABLE_STATUS.has(res.status)) {
-        break;
-      }
-    } catch (_err) {
-      if (attempt >= maxRetries) break;
-    }
-    if (attempt < maxRetries) {
-      const delay = baseMs * Math.pow(2, attempt);
-      await sleep(delay);
-    }
-  }
+  const delivered = await attemptSend(event, config, maxRetries, baseMs);
+  if (delivered) return 'sent';
   return persist(event, config);
 }
 
@@ -188,8 +308,37 @@ async function persist(event: ReportEvent, config: InitConfig): Promise<SendResu
 }
 
 /**
- * Drain the offline queue: each event's send is a single attempt; failures
- * are re-enqueued (upsert on eventId avoids duplicates).
+ * Put events back into the queue, respecting `maxQueueSize`. Returns how many
+ * were actually re-queued.
+ */
+async function requeue(
+  events: ReportEvent[],
+  maxQueueSize: number,
+): Promise<number> {
+  let requeued = 0;
+  for (const event of events) {
+    try {
+      const current = await queue.size();
+      if (current >= maxQueueSize) continue;
+      await queue.enqueue(event);
+      requeued++;
+    } catch {
+      // drop
+    }
+  }
+  return requeued;
+}
+
+/**
+ * Drain the offline queue: each event is sent with the same retry budget the
+ * consumer configured (`maxRetries` / `retryBaseMs`); failures are
+ * re-enqueued (upsert on eventId avoids duplicates) as long as the queue is
+ * below `maxQueueSize`.
+ *
+ * The whole flush runs under a wall-clock budget
+ * ({@link FLUSH_TIME_BUDGET_MS}). Events that could not be attempted before
+ * the budget ran out are put back in the queue, so nothing is lost — the
+ * flush just resumes on the next one.
  */
 export async function flushQueue(
   config: InitConfig,
@@ -201,17 +350,24 @@ export async function flushQueue(
     return { sent: 0, requeued: 0 };
   }
 
+  const maxRetries = config.maxRetries ?? 3;
+  const baseMs = config.retryBaseMs ?? 1000;
+  const maxQueueSize = config.maxQueueSize ?? 100;
+  const deadline = Date.now() + flushBudgetMs;
+
   let sent = 0;
   let requeued = 0;
 
-  for (const event of events) {
-    let success = false;
-    try {
-      const res = await sendOnce(event, config);
-      success = res.ok;
-    } catch {
-      success = false;
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i]!;
+
+    if (Date.now() >= deadline) {
+      // Out of time: the remaining events go back to the queue untouched.
+      requeued += await requeue(events.slice(i), maxQueueSize);
+      break;
     }
+
+    const success = await attemptSend(event, config, maxRetries, baseMs, deadline);
     if (success) {
       try {
         await queue.remove(event.eventId);
@@ -219,14 +375,12 @@ export async function flushQueue(
       } catch {
         // best-effort cleanup
       }
-    } else {
-      try {
-        await queue.enqueue(event);
-        requeued++;
-      } catch {
-        // drop
-      }
+      continue;
     }
+
+    // Respect the same cap as `persist()`: a failing backend must not make
+    // the offline queue grow without bound.
+    requeued += await requeue([event], maxQueueSize);
   }
 
   return { sent, requeued };
