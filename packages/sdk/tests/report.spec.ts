@@ -148,10 +148,24 @@ describe('buildEvent', () => {
     const data = ev.context.data as Record<string, unknown>;
     expect(data.entity_id_raw).toBe('order-123');
   });
+
+  it('falls back to a v4 UUID when crypto.randomUUID is unavailable', () => {
+    vi.stubGlobal('crypto', {
+      getRandomValues: (arr: Uint8Array) => {
+        for (let i = 0; i < arr.length; i++) arr[i] = i;
+        return arr;
+      },
+    });
+    const ctx = makeScrubCtx(BASE_CONFIG);
+    const ev = buildEvent(BASE_CONFIG, ctx, new Error('boom'), undefined, 'error');
+    expect(ev.eventId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+  });
 });
 
 describe('sendOnce', () => {
-  it('POSTs JSON with bearer + event id headers', async () => {
+  it('POSTs the flat ingest payload with bearer + event id headers', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
     vi.stubGlobal('fetch', fetchMock);
     const event = makeEvent();
@@ -162,7 +176,15 @@ describe('sendOnce', () => {
     expect(init.method).toBe('POST');
     expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer gvy_test');
     expect((init.headers as Record<string, string>)['X-Glitchvy-Event-Id']).toBe(event.eventId);
-    expect(init.body).toBe(JSON.stringify(event));
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      event_id: event.eventId,
+      app_version: '0.1.0',
+      environment: 'test',
+      level: 'error',
+      error_name: 'Error',
+      error_message: 'x',
+    });
   });
 
   it('keeps keepalive for a payload under the 64KB cap', async () => {
@@ -248,8 +270,8 @@ describe('flushQueue', () => {
     const fetchMock = vi
       .fn()
       .mockImplementation((_url: string, init: RequestInit) => {
-        const body = JSON.parse(init.body as string) as ReportEvent;
-        return Promise.resolve({ ok: body.eventId !== 'fail', status: 200 });
+        const body = JSON.parse(init.body as string) as { event_id: string };
+        return Promise.resolve({ ok: body.event_id !== 'fail', status: 200 });
       });
     vi.stubGlobal('fetch', fetchMock as Mock);
     await queue.enqueue(makeEvent('a'));

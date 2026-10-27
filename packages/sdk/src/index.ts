@@ -138,7 +138,6 @@ export async function reportError(
   const event = buildEvent(state.config, state.scrubCtx, err, context, level);
   await send(event, state.config);
 }
-
 /** Add/overrides keys in the user context attached to every report from now on. */
 export function setUserContext(partial: Record<string, unknown> | undefined): void {
   const state = getState();

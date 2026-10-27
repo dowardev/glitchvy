@@ -43,6 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A queue flush runs under a wall-clock budget; the events it could not attempt go back to the queue, so nothing is lost.
 - A non-integer `entityId` is preserved as `entity_id_raw` in the context data instead of being dropped.
 - A thrown non-Error value with a circular reference reports its own keys instead of `[object Object]`.
+- The SDK now posts the payload shape the ingestion endpoint accepts. It sent a nested camelCase event while the endpoint validates a flat snake_case contract, so every report was rejected with HTTP 422 and nothing was ever ingested.
+- `event_id` is a valid UUID even when `crypto.randomUUID` is unavailable (it is missing in non-secure contexts).
+
+### Changed
+
+- The length-limited fields of the ingest payload are truncated to the limits the endpoint enforces (`environment`, `app_version`, `route`, `error_name`, `error_type`, `entity_type`, `operation`).
 
 ## [0.0.0]
 
