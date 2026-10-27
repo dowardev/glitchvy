@@ -7,13 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> Work in progress against [LBDS-301](https://linear.app/dowardev/issue/LBDS-301/build-glitchvy-error-reporter-3-packages-sdk-laravel-sdk-admin-spa).
+## [0.1.0] - 2026-10-27
+
+> First release: the SDK, the Laravel SaaS and the admin SPA. Work tracked against [LBDS-301](https://linear.app/dowardev/issue/LBDS-301/build-glitchvy-error-reporter-3-packages-sdk-laravel-sdk-admin-spa).
 
 ### Added
 
 **`glitchvy`** — error reporting SaaS (Sentry-like). Three shipped entities, each with its own changelog:
 
-- **`glitchvy`** SDK (npm, framework-agnostic TypeScript) — `packages/sdk/`
+- **`@dowardev/glitchvy`** SDK (npm, framework-agnostic TypeScript) — `packages/sdk/`
   - `initErrorReporter(config)`, `reportError(err, context, level)`, `setUserContext` / `clearUserContext`, `addBreadcrumb`, `flush`, `getQueueSize`, `getQueueStatus`, `shutdown`
   - Auto-capture: `window.onerror`, `unhandledrejection`, `console.error` patch
   - Scrub: default PII globals (passwords, tokens, Authorization headers) + per-context `redactFields` inside `redactContexts`
@@ -63,7 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 The three top-level directories mirror the runtime split:
 
-- `packages/sdk/` — the only publishable thing (`glitchvy` npm SDK)
+- `packages/sdk/` — the only publishable thing (`@dowardev/glitchvy` npm SDK)
 - `front/` — the admin SPA (Vue 3 + Ionic, served by the SaaS)
 - `back/` — the SaaS server (Laravel 13+ standalone, multi-tenant)
 

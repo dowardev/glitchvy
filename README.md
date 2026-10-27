@@ -54,7 +54,7 @@ glitchvy/
 ├── package.json                         (root, pnpm workspaces)
 ├── pnpm-workspace.yaml
 ├── packages/
-│   └── sdk/                             (npm `glitchvy` — the only consumer installable)
+│   └── sdk/                             (npm `@dowardev/glitchvy` — the only consumer installable)
 ├── front/                               (npm `glitchvy-admin` — Vue 3 + Ionic)
 ├── back/                                (composer `dowardev/glitchvy-server` — Laravel 13+ standalone)
 └── examples/
@@ -106,7 +106,7 @@ pnpm add "git+https://gitlab.com/dowardev/glitchvy.git#v0.1.0" -w packages/sdk
 Then in your `main.ts`:
 
 ```ts
-import { initErrorReporter } from 'glitchvy';
+import { initErrorReporter } from '@dowardev/glitchvy';
 initErrorReporter({
   ingestionUrl: 'https://errors.dowar.xyz/api/glitchvy/errors',
   apiKey: 'gvy_proj_xxx',  // per-project, created in the admin
@@ -117,7 +117,7 @@ initErrorReporter({
 
 ## Status
 
-> **v0.1.0 WIP** — this repo is under active development against [LBDS-301](https://linear.app/dowardev/issue/LBDS-301/build-glitchvy-error-reporter-3-packages-sdk-laravel-sdk-admin-spa). Do not publish externally yet. Use a pinned commit/tag.
+> **v0.1.0** — released. This repo was built against [LBDS-301](https://linear.app/dowardev/issue/LBDS-301/build-glitchvy-error-reporter-3-packages-sdk-laravel-sdk-admin-spa). The SDK is published on npm as `@dowardev/glitchvy`.
 
 | Component | Status | Tests |
 |---|---|---|

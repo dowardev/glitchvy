@@ -10,7 +10,7 @@ importers:
 
   examples/vanilla-consumer:
     dependencies:
-      glitchvy:
+      '@dowardev/glitchvy':
         specifier: workspace:*
         version: link:../../packages/sdk
     devDependencies:
@@ -20,15 +20,15 @@ importers:
 
   examples/vue-consumer:
     dependencies:
+      '@dowardev/glitchvy':
+        specifier: workspace:*
+        version: link:../../packages/sdk
       '@ionic/vue':
         specifier: ^8.4.0
         version: 8.8.19(@stencil/core@4.45.2)(vue-router@4.6.4(vue@3.5.43(typescript@5.9.3)))(vue@3.5.43(typescript@5.9.3))
       '@ionic/vue-router':
         specifier: ^8.4.0
         version: 8.8.19(@stencil/core@4.45.2)(vue-router@4.6.4(vue@3.5.43(typescript@5.9.3)))(vue@3.5.43(typescript@5.9.3))
-      glitchvy:
-        specifier: workspace:*
-        version: link:../../packages/sdk
       ionicons:
         specifier: ^7.4.0
         version: 7.4.0
