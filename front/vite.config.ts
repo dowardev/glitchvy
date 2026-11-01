@@ -7,13 +7,59 @@ import { defineConfig, loadEnv } from 'vite'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
+// Content Security Policy for production builds. The admin SPA used to
+// ship without one, which made any XSS able to run inline script. The
+// policy is injected at build time (not as a static <meta> in index.html)
+// so the dev server keeps working: Vite's HMR needs inline scripts and
+// websockets, a production bundle does not.
+//
+// `connect-src 'self'` assumes the SPA is served from the same origin as
+// the API (the default: the Vite dev server proxies /api, and in
+// production the SPA is served by the same host). A cross-origin API
+// needs its origin added here.
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ')
+
+function contentSecurityPolicy() {
+  return {
+    name: 'glitchvy-csp',
+    apply: 'build' as const,
+    transformIndexHtml(html: string) {
+      return {
+        html,
+        tags: [
+          {
+            tag: 'meta',
+            attrs: {
+              'http-equiv': 'Content-Security-Policy',
+              content: CONTENT_SECURITY_POLICY,
+            },
+            injectTo: 'head-prepend' as const,
+          },
+        ],
+      }
+    },
+  }
+}
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
 
   return {
     plugins: [
-      vue()
+      vue(),
+      contentSecurityPolicy(),
     ],
     resolve: {
       alias: {

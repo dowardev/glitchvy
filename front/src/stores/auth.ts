@@ -6,29 +6,43 @@ import { ref, computed } from 'vue'
 import { api, isGlitchvyApiError } from '@/api/client'
 import type { User, LoginRequest } from '@/types'
 
-const TOKEN_KEY = 'glitchvy_token'
-const USER_KEY = 'glitchvy_user'
-
+/**
+ * Admin session store.
+ *
+ * The session token lives in an httpOnly cookie the browser attaches on
+ * its own: this store never reads, writes or persists a credential. The
+ * only thing kept in memory is the user profile, and it is restored from
+ * the cookie session on boot.
+ */
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
-  const token = ref<string | null>(null)
   const loading = ref(false)
   const error = ref<string | null>(null)
+  /** True once the session restore attempt finished (successfully or not). */
+  const ready = ref(false)
 
-  const isAuthenticated = computed(() => !!user.value && !!token.value)
+  const isAuthenticated = computed(() => !!user.value)
 
-  function loadPersisted(): void {
-    const storedToken = localStorage.getItem(TOKEN_KEY)
-    const storedUser = localStorage.getItem(USER_KEY)
-    if (storedToken && storedUser) {
-      try {
-        token.value = storedToken
-        user.value = JSON.parse(storedUser)
-      } catch {
-        localStorage.removeItem(TOKEN_KEY)
-        localStorage.removeItem(USER_KEY)
-      }
+  let restorePromise: Promise<void> | null = null
+
+  /**
+   * Restore the session from the httpOnly cookie. Safe to call many
+   * times: the first call wins and the result is memoized.
+   */
+  async function restore(): Promise<void> {
+    if (!restorePromise) {
+      restorePromise = (async () => {
+        try {
+          user.value = await api.getMe()
+        } catch {
+          // No valid session: the SPA stays logged out.
+          user.value = null
+        } finally {
+          ready.value = true
+        }
+      })()
     }
+    return restorePromise
   }
 
   async function login(credentials: LoginRequest): Promise<void> {
@@ -37,9 +51,6 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const response = await api.login(credentials)
       user.value = response.user
-      token.value = response.token
-      localStorage.setItem(USER_KEY, JSON.stringify(response.user))
-      localStorage.setItem(TOKEN_KEY, response.token)
     } catch (err) {
       if (isGlitchvyApiError(err)) {
         error.value = err.message
@@ -53,37 +64,24 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function logout(): Promise<void> {
-    const currentToken = token.value;
     loading.value = true;
     try {
-      if (currentToken) {
-        await api.logout(currentToken);
-      }
+      await api.logout();
     } catch {
       // Ignore logout errors
     } finally {
       user.value = null;
-      token.value = null;
-      localStorage.removeItem(USER_KEY);
-      localStorage.removeItem(TOKEN_KEY);
       loading.value = false;
     }
   }
 
   async function fetchMe(): Promise<void> {
-    const currentToken = token.value;
-    if (!currentToken) return;
     loading.value = true;
     try {
-      const me = await api.getMe(currentToken);
-      user.value = me;
-      localStorage.setItem(USER_KEY, JSON.stringify(me));
+      user.value = await api.getMe();
     } catch (err) {
       if (isGlitchvyApiError(err) && err.status === 401) {
         user.value = null;
-        token.value = null;
-        localStorage.removeItem(USER_KEY);
-        localStorage.removeItem(TOKEN_KEY);
       }
       throw err;
     } finally {
@@ -91,14 +89,13 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  loadPersisted();
-
   return {
     user,
-    token,
     loading,
     error,
+    ready,
     isAuthenticated,
+    restore,
     login,
     logout,
     fetchMe,

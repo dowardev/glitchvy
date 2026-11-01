@@ -53,7 +53,7 @@ cp .env.example .env.local
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `VITE_GLITCHVY_API_URL` | `/api/glitchvy` | API base path (proxied in dev) |
+| `VITE_GLITCHVY_API_URL` | `/api` | API base path (proxied in dev) |
 | `VITE_GLITCHVY_PROXY_TARGET` | `http://localhost:8000` | Laravel backend URL for Vite proxy |
 
 ### Building
@@ -126,10 +126,14 @@ front/
 ## Key Features
 
 ### Authentication
-- Laravel Sanctum compatible (cookies + CSRF)
-- `credentials: 'include'` on all requests
-- `Accept: application/json` + `X-Requested-With: XMLHttpRequest` headers
-- User persisted in localStorage (no token stored)
+- The session lives in an httpOnly cookie: the SPA never reads, stores or sends a token. A token in `localStorage` was readable by any XSS and outlived the browser session.
+- `credentials: 'include'` on all requests, so the browser attaches the session cookie.
+- `GET /api/glitchvy/csrf-cookie` bootstraps the readable `XSRF-TOKEN` cookie; every mutating request echoes it in the `X-XSRF-TOKEN` header.
+- `Accept: application/json` + `X-Requested-With: XMLHttpRequest` headers.
+- The session is restored on boot with `GET /api/auth/me`; the router guard waits for that answer before deciding where to send the user.
+
+### Security
+- Production builds carry a strict Content-Security-Policy (`script-src 'self'`, no inline script, `frame-ancestors 'none'`), injected by a Vite plugin so the dev server keeps its HMR.
 
 ### Error Management
 - Paginated error list with cursor-based pagination
@@ -147,12 +151,13 @@ front/
 The frontend expects a Laravel backend with these endpoints:
 
 ```
-POST   /api/glitchvy/login           # Login (Sanctum)
-POST   /api/glitchvy/logout          # Logout
-GET    /api/glitchvy/me              # Current user
-GET    /api/glitchvy/projects        # List projects
-POST   /api/glitchvy/projects        # Create project
-POST   /api/glitchvy/projects/{id}/api-keys # Create API key
+GET    /api/glitchvy/csrf-cookie     # Bootstrap the XSRF token cookie
+POST   /api/auth/login               # Login (session cookie)
+POST   /api/auth/logout              # Logout
+GET    /api/auth/me                  # Current user
+GET    /api/projects                 # List projects
+POST   /api/projects                 # Create project
+POST   /api/projects/{id}/api-keys   # Create API key
 GET    /api/glitchvy/errors          # List errors (with filters)
 GET    /api/glitchvy/errors/{id}     # Error detail
 PATCH  /api/glitchvy/errors/{id}/status # Update status

@@ -4,7 +4,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { api, isGlitchvyApiError } from '@/api/client'
-import { useAuthStore } from './auth'
 import type { Project, CreateProjectRequest, ApiKey, CreateApiKeyRequest, CreateApiKeyResponse } from '@/types'
 
 export const useProjectsStore = defineStore('projects', () => {
@@ -15,15 +14,11 @@ export const useProjectsStore = defineStore('projects', () => {
   const apiKeys = ref<ApiKey[]>([])
   const apiKeysLoading = ref(false)
 
-  function getToken(): string {
-    return useAuthStore().token ?? ''
-  }
-
   async function fetchAll(): Promise<void> {
     loading.value = true
     error.value = null
     try {
-      list.value = await api.listProjects(getToken())
+      list.value = await api.listProjects()
     } catch (err) {
       if (isGlitchvyApiError(err)) {
         error.value = err.message
@@ -40,7 +35,7 @@ export const useProjectsStore = defineStore('projects', () => {
     loading.value = true
     error.value = null
     try {
-      const project = await api.createProject(data, getToken())
+      const project = await api.createProject(data)
       list.value.push(project)
       return project
     } catch (err) {
@@ -59,7 +54,7 @@ export const useProjectsStore = defineStore('projects', () => {
     apiKeysLoading.value = true
     error.value = null
     try {
-      apiKeys.value = await api.listApiKeys(projectId, getToken())
+      apiKeys.value = await api.listApiKeys(projectId)
     } catch (err) {
       if (isGlitchvyApiError(err)) {
         error.value = err.message
@@ -73,7 +68,7 @@ export const useProjectsStore = defineStore('projects', () => {
   }
 
   async function createApiKey(projectId: number, data: CreateApiKeyRequest): Promise<CreateApiKeyResponse> {
-    const response = await api.createApiKey(projectId, data, getToken())
+    const response = await api.createApiKey(projectId, data)
     apiKeys.value.push(response.api_key)
     return response
   }

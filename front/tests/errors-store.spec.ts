@@ -81,8 +81,7 @@ describe('errors store', () => {
         level: 'error',
         status: 'open',
         search: 'test',
-      }),
-      expect.any(String)
+      })
     )
   })
 

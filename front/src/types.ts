@@ -37,7 +37,8 @@ export interface ErrorFilters {
   search?: string
   project_id?: number
   cursor?: string
-  limit?: number
+  /** Page size sent as `per_page`, the parameter the API reads. */
+  per_page?: number
 }
 
 export interface Breadcrumb {
@@ -97,7 +98,12 @@ export interface LoginRequest {
 
 export interface LoginResponse {
   user: User
-  token: string
+  /**
+   * Bearer token, only for non-browser API clients. A browser session
+   * authenticates with the httpOnly session cookie, so the SPA gets
+   * `null` here and never has to store a credential.
+   */
+  token: string | null
 }
 
 export interface User {
