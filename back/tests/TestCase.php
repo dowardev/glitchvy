@@ -17,6 +17,7 @@ use App\Http\Middleware\AuthenticateProjectApiKey;
 use App\Providers\GlitchvyServiceProvider;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Route;
+use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
 use Orchestra\Testbench\TestCase as OrchestraTestCase;
 
 abstract class TestCase extends OrchestraTestCase
@@ -36,13 +37,17 @@ abstract class TestCase extends OrchestraTestCase
             CreateApiKeyCommand::class,
         ]);
 
+        // Configure Sanctum stateful domains for tests
+        $this->app['config']->set('sanctum.stateful', ['localhost:8100', 'localhost', '127.0.0.1', '127.0.0.1:8100', '::1']);
+
         // Call defineRoutes manually
         $this->defineRoutes($this->app->make('router'));
     }
 
     protected function defineRoutes($router)
     {
-        $router->prefix('api')->group(function () use ($router) {
+        // Apply EnsureFrontendRequestsAreStateful to the api group
+        $router->prefix('api')->middleware([EnsureFrontendRequestsAreStateful::class])->group(function () use ($router) {
             $router->post('glitchvy/errors', [IngestController::class, 'store'])
                 ->middleware(['glitchvy.api', 'throttle:glitchvy-ingest'])
                 ->name('glitchvy.errors.store');
@@ -69,6 +74,11 @@ abstract class TestCase extends OrchestraTestCase
             $router->post('auth/login', [AuthController::class, 'login'])->middleware('throttle:glitchvy-login')->name('auth.login');
             $router->post('auth/logout', [AuthController::class, 'logout'])->name('auth.logout');
             $router->get('auth/me', [AuthController::class, 'me'])->middleware('auth:sanctum')->name('auth.me');
+
+            // CSRF cookie endpoint for SPA
+            $router->get('glitchvy/csrf-cookie', function () {
+                return response()->noContent();
+            })->name('glitchvy.csrf-cookie');
         });
 
         // Register middleware alias

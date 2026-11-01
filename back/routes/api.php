@@ -50,3 +50,8 @@ Route::post('auth/logout', [AuthController::class, 'logout'])
     ->middleware('auth:sanctum')
     ->name('auth.logout');
 Route::get('auth/me', [AuthController::class, 'me'])->middleware('auth:sanctum')->name('auth.me');
+
+// SPA CSRF cookie endpoint (runs inside stateful middleware stack).
+Route::get('glitchvy/csrf-cookie', function () {
+    return response()->noContent();
+})->name('glitchvy.csrf-cookie');

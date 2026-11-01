@@ -6,6 +6,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Laravel\Sanctum\PersonalAccessToken;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
@@ -30,6 +31,21 @@ class AuthController extends Controller
             ]);
         }
 
+        // Detect first-party SPA request via Sanctum's 'sanctum' request attribute
+        $isFirstParty = $request->attributes->get('sanctum') === true;
+
+        if ($isFirstParty) {
+            // SPA login: use session guard, regenerate session ID
+            Auth::guard('web')->login($user);
+            $request->session()->regenerate();
+
+            return response()->json([
+                'user' => $user,
+                'token' => null,
+            ]);
+        }
+
+        // API client login: create personal access token
         $token = $user->createToken(
             $validated['device_name'] ?? 'api-token'
         )->plainTextToken;
@@ -45,7 +61,26 @@ class AuthController extends Controller
      */
     public function logout(Request $request)
     {
-        $request->user()->currentAccessToken()->delete();
+        // Detect first-party SPA request via Sanctum's 'sanctum' request attribute
+        $isFirstParty = $request->attributes->get('sanctum') === true;
+
+        if ($isFirstParty) {
+            // SPA logout: invalidate session, regenerate CSRF token
+            Auth::guard('web')->logout();
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+
+            return response()->json(['message' => 'Logged out']);
+        }
+
+        // API client logout: delete current access token. A session
+        // authenticated user has no token to delete, so the token is
+        // checked before it is removed.
+        $token = $request->user()?->currentAccessToken();
+
+        if ($token instanceof PersonalAccessToken) {
+            $token->delete();
+        }
 
         return response()->json(['message' => 'Logged out']);
     }

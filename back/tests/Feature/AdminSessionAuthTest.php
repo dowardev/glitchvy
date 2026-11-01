@@ -1,0 +1,168 @@
+<?php
+// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-FileCopyrightText: 2026 DowarDev
+
+namespace Tests\Feature;
+
+use App\Models\User;
+use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Hash;
+
+class AdminSessionAuthTest extends \Tests\TestCase
+{
+    private function createUser(string $email = 'admin@glitchvy.app', string $password = 'password123'): User
+    {
+        return User::factory()->create([
+            'email' => $email,
+            'password' => Hash::make($password),
+        ]);
+    }
+
+    private function postLogin(string $email, string $password, array $headers = []): \Illuminate\Testing\TestResponse
+    {
+        return $this->postJson('/api/auth/login', [
+            'email' => $email,
+            'password' => $password,
+        ], $headers);
+    }
+
+    public function test_spa_login_returns_user_with_null_token_and_sets_session_cookie(): void
+    {
+        Config::set('sanctum.stateful', ['localhost:8100']);
+
+        $user = $this->createUser();
+
+        $response = $this->postLogin($user->email, 'password123', [
+            'Referer' => 'http://localhost:8100/errors',
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonStructure(['user', 'token']);
+        $this->assertNull($response->json('token'), 'SPA login should return null token');
+        $this->assertNotNull($response->json('user'));
+        $this->assertSame($user->email, $response->json('user.email'));
+
+        // Session cookie should be set
+        $this->assertTrue(
+            $response->headers->has('Set-Cookie'),
+            'Response should have Set-Cookie header for session'
+        );
+    }
+
+    public function test_spa_subsequent_request_with_cookie_is_authenticated(): void
+    {
+        Config::set('sanctum.stateful', ['localhost:8100']);
+
+        $user = $this->createUser();
+
+        // Login and capture cookies
+        $loginResponse = $this->postLogin($user->email, 'password123', [
+            'Referer' => 'http://localhost:8100/errors',
+        ]);
+        $loginResponse->assertStatus(200);
+
+        $cookies = $loginResponse->headers->getCookies();
+        $sessionCookie = null;
+        foreach ($cookies as $cookie) {
+            if (str_starts_with($cookie->getName(), 'laravel_session')) {
+                $sessionCookie = $cookie;
+                break;
+            }
+        }
+        $this->assertNotNull($sessionCookie, 'Laravel session cookie should be set');
+
+        // Make authenticated request with the session cookie
+        $meResponse = $this->withCookie($sessionCookie->getName(), $sessionCookie->getValue())
+            ->getJson('/api/auth/me');
+
+        $meResponse->assertStatus(200);
+        $this->assertSame($user->email, $meResponse->json('email'));
+    }
+
+    public function test_api_client_login_returns_bearer_token(): void
+    {
+        // No Referer header - plain API client
+        $user = $this->createUser();
+
+        $response = $this->postLogin($user->email, 'password123');
+
+        $response->assertStatus(200);
+        $response->assertJsonStructure(['user', 'token']);
+        $this->assertNotNull($response->json('token'), 'API client login should return a bearer token');
+        $this->assertIsString($response->json('token'));
+    }
+
+    public function test_api_client_token_authenticates_via_authorization_header(): void
+    {
+        $user = $this->createUser();
+
+        $loginResponse = $this->postLogin($user->email, 'password123');
+        $loginResponse->assertStatus(200);
+
+        $token = $loginResponse->json('token');
+        $this->assertNotNull($token);
+
+        $meResponse = $this->withHeaders([
+            'Authorization' => 'Bearer ' . $token,
+        ])->getJson('/api/auth/me');
+
+        $meResponse->assertStatus(200);
+        $this->assertSame($user->email, $meResponse->json('email'));
+    }
+
+    public function test_csrf_cookie_endpoint_returns_204_and_sets_xsrf_token(): void
+    {
+        Config::set('sanctum.stateful', ['localhost:8100']);
+
+        $response = $this->get('/api/glitchvy/csrf-cookie', [
+            'Referer' => 'http://localhost:8100/',
+        ]);
+
+        $response->assertStatus(204);
+
+        $cookies = $response->headers->getCookies();
+        $xsrfCookie = null;
+        foreach ($cookies as $cookie) {
+            if ($cookie->getName() === 'XSRF-TOKEN') {
+                $xsrfCookie = $cookie;
+                break;
+            }
+        }
+        $this->assertNotNull($xsrfCookie, 'XSRF-TOKEN cookie should be set');
+    }
+
+    public function test_spa_logout_invalidates_session(): void
+    {
+        Config::set('sanctum.stateful', ['localhost:8100']);
+
+        $user = $this->createUser();
+
+        // Login
+        $loginResponse = $this->postLogin($user->email, 'password123', [
+            'Referer' => 'http://localhost:8100/errors',
+        ]);
+        $loginResponse->assertStatus(200);
+
+        $cookies = $loginResponse->headers->getCookies();
+        $sessionCookie = null;
+        foreach ($cookies as $cookie) {
+            if (str_starts_with($cookie->getName(), 'laravel_session')) {
+                $sessionCookie = $cookie;
+                break;
+            }
+        }
+        $this->assertNotNull($sessionCookie);
+
+        // Logout with session cookie (include Referer for first-party detection)
+        $logoutResponse = $this->withCookie($sessionCookie->getName(), $sessionCookie->getValue())
+            ->withHeaders(['Referer' => 'http://localhost:8100/errors'])
+            ->postJson('/api/auth/logout');
+        $logoutResponse->assertStatus(200);
+        $this->assertSame('Logged out', $logoutResponse->json('message'));
+
+        // Next request with same cookie should be 401
+        $meResponse = $this->withCookie($sessionCookie->getName(), $sessionCookie->getValue())
+            ->getJson('/api/auth/me');
+        $meResponse->assertStatus(401);
+    }
+}
