@@ -44,11 +44,11 @@ abstract class TestCase extends OrchestraTestCase
     {
         $router->prefix('api')->group(function () use ($router) {
             $router->post('glitchvy/errors', [IngestController::class, 'store'])
-                ->middleware('glitchvy.api')
+                ->middleware(['glitchvy.api', 'throttle:glitchvy-ingest'])
                 ->name('glitchvy.errors.store');
 
             $router->post('glitchvy/errors/{id}/screenshot', [IngestScreenshotController::class, 'store'])
-                ->middleware('glitchvy.api')
+                ->middleware(['glitchvy.api', 'throttle:glitchvy-ingest'])
                 ->whereNumber('id')
                 ->name('glitchvy.screenshot.upload');
 
@@ -66,7 +66,7 @@ abstract class TestCase extends OrchestraTestCase
                 $router->post('projects/{id}/api-keys', [AdminProjectController::class, 'createApiKey'])->whereNumber('id')->name('projects.api-keys.store');
             });
 
-            $router->post('auth/login', [AuthController::class, 'login'])->name('auth.login');
+            $router->post('auth/login', [AuthController::class, 'login'])->middleware('throttle:glitchvy-login')->name('auth.login');
             $router->post('auth/logout', [AuthController::class, 'logout'])->name('auth.logout');
             $router->get('auth/me', [AuthController::class, 'me'])->middleware('auth:sanctum')->name('auth.me');
         });

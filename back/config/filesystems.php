@@ -38,6 +38,17 @@ return [
             'report' => false,
         ],
 
+        // The disk the screenshots are stored on by default. It is not
+        // publicly accessible: it is the same root as `local`, under a
+        // name that says what it is for.
+        'private' => [
+            'driver' => 'local',
+            'root' => storage_path('app/private'),
+            'serve' => false,
+            'throw' => false,
+            'report' => false,
+        ],
+
         'public' => [
             'driver' => 'local',
             'root' => storage_path('app/public'),

@@ -11,7 +11,7 @@ use App\Http\Controllers\IngestScreenshotController;
 use Illuminate\Support\Facades\Route;
 
 // Public SDK ingestion endpoints (project API key required).
-Route::middleware('glitchvy.api')->prefix('glitchvy')->group(function () {
+Route::middleware(['glitchvy.api', 'throttle:glitchvy-ingest'])->prefix('glitchvy')->group(function () {
     Route::post('errors', [IngestController::class, 'store'])->name('glitchvy.errors.store');
     Route::post('errors/{id}/screenshot', [IngestScreenshotController::class, 'store'])
         ->whereNumber('id')
@@ -45,7 +45,7 @@ Route::middleware('auth:sanctum')->group(function () {
 });
 
 // Public auth endpoints.
-Route::post('auth/login', [AuthController::class, 'login'])->name('auth.login');
+Route::post('auth/login', [AuthController::class, 'login'])->middleware('throttle:glitchvy-login')->name('auth.login');
 Route::post('auth/logout', [AuthController::class, 'logout'])
     ->middleware('auth:sanctum')
     ->name('auth.logout');
