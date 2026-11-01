@@ -36,7 +36,9 @@ class AdminErrorController extends Controller
             })
             ->latest();
 
-        $perPage = $request->integer('per_page', 20);
+        // `per_page` is the documented parameter; `limit` is accepted as
+        // an alias for clients that were written against the earlier one.
+        $perPage = $request->integer('per_page', $request->integer('limit', 20));
 
         $page = $query->cursorPaginate($perPage);
 
