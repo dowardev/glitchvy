@@ -106,3 +106,18 @@ describe('capture hooks', () => {
     expect(cb).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('install flag (S7) — tested via public API in index.spec.ts', () => {
+  it('uninstallAutoCapture correctly resets the installed flag', () => {
+    const cb = vi.fn();
+    setReportCallback(cb);
+    installAutoCapture({});
+    uninstallAutoCapture();
+    // After uninstall, a fresh install should work
+    const addEventListenerSpy = vi.spyOn(window, 'addEventListener');
+    installAutoCapture({});
+    const registered = addEventListenerSpy.mock.calls.map((args) => args[0]).filter((t) => typeof t === 'string');
+    expect(registered).toContain('error');
+    addEventListenerSpy.mockRestore();
+  });
+});

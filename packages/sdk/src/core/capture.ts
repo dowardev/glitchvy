@@ -41,10 +41,14 @@ export function installAutoCapture(
   onOnline?: () => void,
 ): void {
   if (installed) return;
-  installed = true;
 
+  // The hooks are only marked as installed once there is a window to
+  // install them on: a runtime without one (SSR) must be able to install
+  // them later, when the window shows up.
   const win = getGlobal();
   if (!win) return;
+
+  installed = true;
 
   const capture: Required<CaptureConfig> = {
     onerror: cfg?.onerror ?? true,

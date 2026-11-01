@@ -84,7 +84,7 @@ const onReport = async () => {
 | `flush()` | fn | Forces an immediate drain of the offline queue. |
 | `getQueueSize()` | fn | Number of events currently persisted offline. A `0` is ambiguous (it also means the queue could not be read) — use `getQueueStatus()` when that matters. |
 | `getQueueStatus()` | fn (async) | `{ size, readable, error? }` for the offline queue. `readable: false` means IndexedDB could not be read at all. |
-| `shutdown()` | fn | Tears down auto-capture hooks and flushes. Mainly for tests / HMR. |
+| `shutdown()` | fn (async) | Tears down auto-capture hooks, flushes the offline queue, and resets state. Mainly for tests / HMR. Safe to call when never initialized. |
 
 ## Configuration
 
