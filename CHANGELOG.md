@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> Hardening of `v0.1.0` before it takes real traffic, tracked in [issue #6](https://gitlab.com/dowardev/glitchvy/-/issues/6).
+
+### Fixed
+
+**`@dowardev/glitchvy`** (SDK)
+
+- The SDK `level` values did not match the backend enum. `reportError(err, ctx, 'warn')` was answered `422` and the event was lost, silently and forever (it was re-queued on every flush). The type now reaches the whole backend enum (`debug`, `info`, `warning`, `error`, `critical`), `warn` stays a public alias and is mapped to `warning` at the transport boundary.
+- `shutdown()` did not flush, although the README said it did. It is now async and drains the offline queue before resetting the state.
+- `initErrorReporter()` in a runtime without a `window` permanently disabled auto-capture for that module instance. The hooks are now only marked as installed after the window check.
+
+**`dowardev/glitchvy-server`** (Laravel)
+
+- The ingestion endpoint had no rate limit. The per-project API key ships in the browser bundle of every consumer app, so anyone who extracted it could flood the database. The limit is per project and comes from `GLITCHVY_RATE_LIMIT` (`60,1` by default).
+- The admin login had no throttle, so the credentials could be brute-forced. The limit is per IP and email and comes from `GLITCHVY_LOGIN_RATE_LIMIT` (`5,1` by default).
+- The documented environment variables (`GLITCHVY_RETENTION_DAYS`, `GLITCHVY_STORAGE_DISK`, `GLITCHVY_RATE_LIMIT`) were read by no code, and the one that existed (`GLITCHVY_SCREENSHOT_DISK`) was undocumented. They now live in `config/glitchvy.php` and are listed in `.env.example`.
+- `glitchvy:prune` hardcoded `--days=30` and no scheduler entry existed. It now defaults to the configured retention days and runs daily.
+- The documented ingest payload showed `tags` as an array while the SDK and the dashboard use an object. The object map is the canonical shape: a list is now rejected with a clear message instead of being stored with numeric keys.
+
+**`glitchvy-admin`** (Vue 3 + Ionic)
+
+- The admin token was kept in `localStorage`, where any XSS could read it, and it outlived the browser session. The session now lives in an httpOnly cookie that the SPA never touches.
+- The page size was sent as `limit`, which the API ignored: the error list was always 20 rows. The API reads `per_page` now.
+- The SPA shipped without a Content-Security-Policy. Production builds now carry a strict one (`script-src 'self'`, no inline script, `frame-ancestors 'none'`).
+
 ## [0.1.0] - 2026-10-27
 
 > First release: the SDK, the Laravel SaaS and the admin SPA. Work tracked against [LBDS-301](https://linear.app/dowardev/issue/LBDS-301/build-glitchvy-error-reporter-3-packages-sdk-laravel-sdk-admin-spa).

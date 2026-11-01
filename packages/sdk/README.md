@@ -15,10 +15,10 @@
 
 This package has **no UI**. Wrapping these primitives in your framework (Vue 3 / Ionic, React, vanilla) is the consumer's job.
 
-## Install (v0.x, via git+https)
+## Install
 
 ```bash
-pnpm add "git+https://gitlab.com/dowardev/glitchvy.git#v0.1.0" -w packages/sdk
+pnpm add @dowardev/glitchvy
 # or, in the monorepo during dev:
 pnpm add "workspace:*" --filter <your-app>
 ```
@@ -31,7 +31,7 @@ import { initErrorReporter, reportError, setUserContext } from '@dowardev/glitch
 
 initErrorReporter({
   ingestionUrl: 'https://errors.dowar.xyz/api/glitchvy/errors', // SaaS URL
-  apiKey: 'gvy_proj_xxx...',                                     // per-project
+  apiKey: 'gv_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',          // per-project
   appVersion: '0.78.0',
   environment: 'production',
   scrubRules: {
@@ -77,7 +77,7 @@ const onReport = async () => {
 | Symbol | Kind | Description |
 |---|---|---|
 | `initErrorReporter(config)` | fn | Bootstraps the SDK. Idempotent; safe to call once. |
-| `reportError(errorOrMessage, context?)` | fn (async) | Reports an error and returns a `Promise`. Failures are queued, not thrown. Called before `initErrorReporter`, the event is buffered (up to 20) and sent once the SDK is initialized. |
+| `reportError(errorOrMessage, context?)` | fn (async) | Reports an error and returns a `Promise`. Failures are queued, not thrown. Called before `initErrorReporter`, the event is buffered (up to 20) and sent once the SDK is initialized. The optional third argument is the level: `debug`, `info`, `warning`, `error` or `critical`. `warn` is accepted as an alias for `warning` and is sent as `warning`. |
 | `setUserContext(partial)` | fn | Adds/overrides user context fields. |
 | `clearUserContext()` | fn | Clears the user context. |
 | `addBreadcrumb(message, data?)` | fn | Trail of events leading to an error (manual). |

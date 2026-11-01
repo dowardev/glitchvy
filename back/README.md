@@ -39,9 +39,19 @@ Key environment variables (see `.env.example`):
 | `DB_DATABASE` | Database path | `database/database.sqlite` |
 | `GLITCHVY_RETENTION_DAYS` | Days before pruning soft-deleted errors | `30` |
 | `GLITCHVY_STORAGE_DISK` | Filesystem disk for screenshots | `private` |
-| `GLITCHVY_RATE_LIMIT` | Rate limit for API endpoints | `60,1` |
+| `GLITCHVY_RATE_LIMIT` | Ingest rate limit per project (`requests,minutes`) | `60,1` |
+| `GLITCHVY_LOGIN_RATE_LIMIT` | Admin login rate limit per IP and email (`requests,minutes`) | `5,1` |
+| `SANCTUM_STATEFUL_DOMAINS` | Origins allowed to authenticate with the session cookie | `localhost,localhost:8100,127.0.0.1,127.0.0.1:8100,::1` |
+| `CORS_ALLOWED_ORIGINS` | Origins allowed to call the API with credentials | `http://localhost:8100,http://127.0.0.1:8100` |
+| `SESSION_SAME_SITE` | SameSite attribute of the session cookie | `lax` |
+| `SESSION_SECURE_COOKIE` | Send the session cookie over HTTPS only | `false` |
 
 The `private` disk points to `storage/app/private` and is not publicly accessible.
+
+A cross-origin deployment (the SPA served from another host) needs
+`SANCTUM_STATEFUL_DOMAINS` and `CORS_ALLOWED_ORIGINS` to list that host, plus
+`SESSION_SAME_SITE=none` and `SESSION_SECURE_COOKIE=true`, otherwise the
+browser refuses to send the session cookie.
 
 ## Running
 
@@ -61,6 +71,9 @@ All ingestion endpoints require `Authorization: Bearer <api_key>` header.
 | `POST` | `/api/glitchvy/errors` | Create error report |
 | `POST` | `/api/glitchvy/errors/{id}/screenshot` | Upload screenshot |
 
+Both endpoints are rate limited per project (`GLITCHVY_RATE_LIMIT`): past the
+budget the endpoint answers `429`.
+
 **Error Report Payload:**
 ```json
 {
@@ -78,7 +91,7 @@ All ingestion endpoints require `Authorization: Bearer <api_key>` header.
   "entity_type": "user",
   "entity_id": 123,
   "operation": "create",
-  "tags": ["api", "validation"],
+  "tags": {"source": "api", "area": "validation"},
   "data": {"field": "email"},
   "user_id": 456,
   "user_payload": {"id": 456, "email": "test@example.com"},
@@ -86,25 +99,42 @@ All ingestion endpoints require `Authorization: Bearer <api_key>` header.
 }
 ```
 
-### Admin (Sanctum Token Auth)
+`level` is one of `debug`, `info`, `warning`, `error`, `critical`. `tags` is an
+object of string values (the shape the SDK sends and the dashboard renders as
+`key: value` badges); a JSON list is rejected with `422`.
 
-Requires `Authorization: Bearer <sanctum_token>` from `/api/auth/login`.
+### Admin (Sanctum)
+
+Two ways to authenticate:
+
+- **Browser session (the admin SPA).** `POST /api/auth/login` from an origin
+  listed in `SANCTUM_STATEFUL_DOMAINS` opens a session: the response sets an
+  httpOnly session cookie and the body carries `token: null`. The SPA first
+  calls `GET /api/glitchvy/csrf-cookie` and echoes the readable `XSRF-TOKEN`
+  cookie back in the `X-XSRF-TOKEN` header on every mutating request.
+- **API client.** A login from anywhere else returns a bearer token:
+  `Authorization: Bearer <sanctum_token>`.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| `GET` | `/api/glitchvy/csrf-cookie` | Bootstrap the XSRF token cookie (browser session) |
 | `GET` | `/api/glitchvy/errors` | List errors (cursor paginated, filterable) |
 | `GET` | `/api/glitchvy/errors/{id}` | Show error with screenshots |
-| `PATCH` | `/api/glitchvy/errors/{id}/status` | Update status (open/triaged/resolved/closed) |
+| `PATCH` | `/api/glitchvy/errors/{id}/status` | Update status (open/in_progress/resolved/ignored) |
 | `GET` | `/api/glitchvy/errors/{id}/screenshot` | Download screenshot |
 | `GET` | `/api/projects` | List projects |
 | `POST` | `/api/projects` | Create project |
 | `POST` | `/api/projects/{id}/api-keys` | Create API key for project |
-| `POST` | `/api/auth/login` | Login, returns token |
-| `POST` | `/api/auth/logout` | Revoke current token |
+| `POST` | `/api/auth/login` | Login (session for a browser, token for an API client) |
+| `POST` | `/api/auth/logout` | End the session or revoke the current token |
 | `GET` | `/api/auth/me` | Current user |
 
+`POST /api/auth/login` is rate limited per IP and email
+(`GLITCHVY_LOGIN_RATE_LIMIT`): past the budget it answers `429`.
+
 **Query parameters for `/api/glitchvy/errors`:**
-- `environment`, `status`, `level`, `project_id`, `search`, `per_page`
+- `environment`, `status`, `level`, `project_id`, `search`, `per_page` (`limit`
+  is accepted as an alias)
 
 ## CLI Commands
 
@@ -118,9 +148,12 @@ php artisan glitchvy:create-api-key --project=my-app --name="Production Key"
 # Prune old soft-deleted errors (dry run)
 php artisan glitchvy:prune --days=30 --dry-run
 
-# Actually prune
-php artisan glitchvy:prune --days=30
+# Actually prune (defaults to GLITCHVY_RETENTION_DAYS)
+php artisan glitchvy:prune
 ```
+
+The prune command is scheduled daily (`Schedule::command('glitchvy:prune')->daily()`),
+so run `php artisan schedule:work` on the server.
 
 ## Testing
 
