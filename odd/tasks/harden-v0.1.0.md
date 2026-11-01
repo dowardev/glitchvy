@@ -1,0 +1,43 @@
+# Harden v0.1.0 (GitLab issue #6)
+
+Work the ten findings of GitLab issue #6 (Dowardev/glitchvy#6, "Harden v0.1.0 before real traffic") across the SDK, the Laravel backend and the admin SPA. Every finding is pinned by a test through a public interface.
+
+## Specs
+
+- **S1** — "align the two enums — map the SDK's `warn` to the backend's `warning` (or accept `warning` in the SDK and keep `warn` as an alias), and add `debug` / `critical` to the SDK type so the whole backend enum is reachable. Add one test per SDK level asserting the ingest payload is accepted by the backend contract." Backend accepted enum: `'level' => 'nullable|in:debug,info,warning,error,critical'`.
+- **S2** — "apply a per-project throttle to the ingest route and wire the documented env var to it." Documented env var: `GLITCHVY_RATE_LIMIT` (`60,1`). "The ingestion endpoint has no rate limit".
+- **S3** — "add `->middleware('throttle:...')` to the login route." (`POST /api/auth/login`, "The admin login route has no throttle").
+- **S4** — "move the token to an httpOnly cookie (or at least a session-scoped store) and add a CSP." Decision taken by the user: httpOnly cookie + Sanctum SPA authentication (stateful), not sessionStorage, not plain localStorage.
+- **S5** — "The admin SPA's page-size filter is ignored": `front/src/api/client.ts:143` sends `?limit=`; `back/app/Http/Controllers/AdminErrorController.php:39` reads `per_page`.
+- **S6** — "`shutdown()` does not flush, but the README says it does": `packages/sdk/src/index.ts:205` never calls `flush()`. "Tears down auto-capture hooks and flushes." A consumer relying on that loses queued events.
+- **S7** — "`initErrorReporter` in a runtime without `window` permanently disables auto-capture": `packages/sdk/src/core/capture.ts:44` sets `installed = true` before the `getGlobal()` check.
+- **S8** — "The documented ingest payload uses `tags` as an array; the SDK and the SPA use an object". `back/README.md:81` documents `"tags": ["api", "validation"]`; SDK sends an object, SPA renders `Object.keys(detail.tags)` as `key: value` badges. The object shape (map of string → string) is the canonical one.
+- **S9** — "`back/README.md` documents env vars that no code reads": `GLITCHVY_RETENTION_DAYS`, `GLITCHVY_STORAGE_DISK`, `GLITCHVY_RATE_LIMIT`. "The one that does exist (`GLITCHVY_SCREENSHOT_DISK`) is undocumented. `glitchvy:prune` hardcodes `--days=30` instead of reading the documented variable, and no scheduler entry is registered (`back/routes/console.php` has no `Schedule::` call)."
+- **S10** — "README drift": root `README.md:124-126` reports 53/25/31 tests (current: 79 SDK / 29 backend / 32 admin); "Publishing SDK to npm registry" is listed as out of scope although `@dowardev/glitchvy@0.1.0` is published; `packages/sdk/README.md:34` shows `apiKey: 'gvy_proj_xxx...'` while the real format is `gv_<40 chars>`; `packages/sdk/README.md:21` installs via git+https although the package is on npm.
+- **S11** — Verification contract from the issue: "Each item must be pinned by a test through the public interface, not by reading the source". "The throttles: a test asserting the route answers `429` past the limit."
+
+Non-goals (explicitly out of this issue): error grouping/fingerprinting, `setUserContext()` exposure, `beforeSend`/`sampleRate`/`ignoreErrors`, source maps, server-side reporter, alerting, SDK screenshot upload, CI hardening.
+
+## Tasks
+
+- **T1** (S1, S6, S7) — SDK: align the `level` enum with the backend contract, make `shutdown()` flush, fix the capture install flag. Surfaces: `packages/sdk/**`. Commit: `fix(sdk): align levels with the backend contract and flush on shutdown`. — **done**, commit `2bf5394`
+- **T2** (S2, S3, S9) — Backend: per-project ingest throttle wired to `GLITCHVY_RATE_LIMIT`, login throttle, `GLITCHVY_RETENTION_DAYS` / `GLITCHVY_STORAGE_DISK` wiring plus the prune schedule and `.env.example`. Surfaces: `back/**`. Commit: `feat(back): throttle the ingest and login endpoints, wire the documented env vars`. — **done**, commit `fa9b9e6`
+- **T3** (S5) — Backend + front: page-size parameter contract (`per_page` canonical, `limit` accepted as alias). Surfaces: `back/app/Http/Controllers/AdminErrorController.php`, `back/tests/**`, `front/src/api/client.ts`, `front/tests/**`. Commit: `fix(errors): honour the page-size parameter on both sides`. — **done** (front + back), commit `pending`
+- **T4** (S4) — Admin auth: httpOnly cookie session (Sanctum stateful) for the SPA, plus CSP. Surfaces: `back/config/sanctum.php`, `back/app/**`, `back/routes/api.php`, `back/tests/**`, `front/src/**`, `front/tests/**`. Commit: `feat(auth): move the admin token to an httpOnly cookie session`. — **front done**, backend in progress
+- **T5** (S8) — Align the documented `tags` shape (object map) on docs, backend validation and SPA rendering. Surfaces: `back/README.md`, `back/app/Http/Controllers/IngestController.php`, `back/tests/**`, `front/src/views/ErrorDetailView.vue`, `front/tests/**`. Commit: `fix(ingest): align the documented tags shape with the SDK and the dashboard`. — **code done** (validation + tests), docs pending
+- **T6** (S10) — Refresh the READMEs (test counts, npm install, API key format, env vars, out-of-scope list). Surfaces: `README.md`, `packages/sdk/README.md`, `back/README.md`. Commit: `docs(readme): refresh the docs for v0.1.0`. — **root README partially done**
+
+## Log
+
+- **L1** — User request (verbatim): "vamos con #6" — resolved to "Issue #6 completo (10 hallazgos)" (GitLab issue #6 in Dowardev/glitchvy).
+- **L2** — User decision (verbatim answer to the token-storage question): "Cookie httpOnly + Sanctum SPA".
+- **L3** — Issue #6 finding 1 states the backend accepts only `debug,info,warning,error,critical`, while `packages/sdk/src/types.ts:42` declares `export type ErrorLevel = 'error' | 'warn' | 'info';` and `packages/sdk/src/core/ingest.ts:97` forwards the value verbatim, so `warn` events are answered `422` and lost silently.
+- **L4** — Issue #6 finding 2: `back/routes/api.php:14-18` carries only the `glitchvy.api` middleware; `grep -rn "GLITCHVY_" back --include="*.php"` finds exactly one hit (`GLITCHVY_SCREENSHOT_DISK`).
+- **L5** — Issue #6 finding 4 impact: "any XSS in the admin SPA exfiltrates a working admin token. The SPA ships no CSP."
+- **L6** — Issue #6 finding 8 impact: "A manual POST that follows the documented contract renders badges `0: api`, `1: validation` in the dashboard." Canonical shape decided: object map of string → string, matching the SDK and the SPA rendering.
+- **L7** — Related issue #5 P3 (a non-retryable 4xx is re-queued forever) is explicitly out of scope here; issue #6 says "Fixing that stops the queue poisoning, but not the loss — both are needed."
+- **L8** — T2 landed as commit `fa9b9e6`. Two corrections applied on top of the worker output: the default screenshot disk (`private`) had no filesystem disk configured, so `config/filesystems.php` gained one, and the tautological "the disk comes from the config" test was replaced by an upload test that asserts the file lands on the configured disk.
+- **L9** — T5 decision: the canonical `tags` shape is the object map (`{"source": "console.error"}`), the same one the SDK sends and the dashboard renders. The ingestion endpoint now rejects a JSON list with a clear message, so the documented contract and the stored data cannot drift again.
+- **L10** — T1 landed as commit `2bf5394`. Corrections applied on top of the worker output: the production module carried a test-only hook (`__setTestGetGlobal`) that the tests did not need (the runtime without a window is simulated by stubbing the global), the console.error patch had been de-indented, and the original "shutdown clears the console.error hook" test had been dropped and is back.
+- **L11** — `shutdown()` is now async (`Promise<void>`). It is a type-level change for a published package (`0.1.0`); the next release should be a minor bump. The version bump and the npm publish remain the user's decision.
+- **L12** — Slice boundary: the feature branch carries two commits so far (`fa9b9e6`, `2bf5394`). The remaining work (auth session, tags shape, docs) is committed in separate reviewable slices under the 400-line guideline.
