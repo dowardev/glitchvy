@@ -55,6 +55,12 @@ cp .env.example .env.local
 |----------|---------|-------------|
 | `VITE_GLITCHVY_API_URL` | `/api` | API base path (proxied in dev) |
 | `VITE_GLITCHVY_PROXY_TARGET` | `http://localhost:8000` | Laravel backend URL for Vite proxy |
+| `VITE_GLITCHVY_CSP_CONNECT_SRC` | `'self'` | `connect-src` of the production CSP. Add the API origin when the SPA is served from another host (e.g. `'self' https://errors.dowar.xyz`) |
+
+The SPA and the API must share a site: the session lives in an httpOnly cookie
+and the XSRF token in a readable cookie, both of which the browser only
+exposes to the domain that set them. Serve the SPA from the same host as the
+API (or from a sibling subdomain) and proxy `/api` to it.
 
 ### Building
 

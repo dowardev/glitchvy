@@ -51,7 +51,11 @@ The `private` disk points to `storage/app/private` and is not publicly accessibl
 A cross-origin deployment (the SPA served from another host) needs
 `SANCTUM_STATEFUL_DOMAINS` and `CORS_ALLOWED_ORIGINS` to list that host, plus
 `SESSION_SAME_SITE=none` and `SESSION_SECURE_COOKIE=true`, otherwise the
-browser refuses to send the session cookie.
+browser refuses to send the session cookie. The SPA and the API must also
+share a site: the XSRF token lives in a readable cookie, and the browser only
+exposes a cookie to the domain that set it. Serving the SPA from the same
+host as the API (or from a sibling subdomain) and proxying `/api` keeps both
+cookies usable.
 
 ## Running
 

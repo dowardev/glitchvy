@@ -13,24 +13,25 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 // so the dev server keeps working: Vite's HMR needs inline scripts and
 // websockets, a production bundle does not.
 //
-// `connect-src 'self'` assumes the SPA is served from the same origin as
-// the API (the default: the Vite dev server proxies /api, and in
-// production the SPA is served by the same host). A cross-origin API
-// needs its origin added here.
-const CONTENT_SECURITY_POLICY = [
-  "default-src 'self'",
-  "script-src 'self'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
-  "font-src 'self' data:",
-  "connect-src 'self'",
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "frame-ancestors 'none'",
-].join('; ')
+// `connect-src` assumes the SPA is served from the same origin as the
+// API (the default: the Vite dev server proxies /api, and in production
+// the SPA is served by the same host). A deployment that calls the API
+// from another origin adds it here, e.g.
+// VITE_GLITCHVY_CSP_CONNECT_SRC="'self' https://errors.dowar.xyz".
+function contentSecurityPolicy(connectSrc: string) {
+  const policy = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    `connect-src ${connectSrc}`,
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join('; ')
 
-function contentSecurityPolicy() {
   return {
     name: 'glitchvy-csp',
     apply: 'build' as const,
@@ -42,7 +43,7 @@ function contentSecurityPolicy() {
             tag: 'meta',
             attrs: {
               'http-equiv': 'Content-Security-Policy',
-              content: CONTENT_SECURITY_POLICY,
+              content: policy,
             },
             injectTo: 'head-prepend' as const,
           },
@@ -59,7 +60,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       vue(),
-      contentSecurityPolicy(),
+      contentSecurityPolicy(env.VITE_GLITCHVY_CSP_CONNECT_SRC || "'self'"),
     ],
     resolve: {
       alias: {

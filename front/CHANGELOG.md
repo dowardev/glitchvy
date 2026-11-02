@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- A strict Content-Security-Policy is injected into production builds (`script-src 'self'`, no inline script, `frame-ancestors 'none'`). The SPA shipped without one, so any XSS could run inline script and exfiltrate the admin session.
+- A strict Content-Security-Policy is injected into production builds (`script-src 'self'`, no inline script, `frame-ancestors 'none'`). The SPA shipped without one, so any XSS could run inline script and exfiltrate the admin session. The `connect-src` origin list is configurable with `VITE_GLITCHVY_CSP_CONNECT_SRC` for a deployment that serves the SPA from another host.
 - The SPA authenticates with an httpOnly session cookie. `GET /api/glitchvy/csrf-cookie` bootstraps the readable XSRF token that every mutating request echoes back in the `X-XSRF-TOKEN` header.
 
 - Initial release of the Vue 3 + Ionic 9 admin SPA.
