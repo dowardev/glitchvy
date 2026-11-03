@@ -194,6 +194,48 @@ class AdminSessionAuthTest extends \Tests\TestCase
         return null;
     }
 
+    public function test_api_client_logout_revokes_the_token(): void
+    {
+        $user = $this->createUser();
+
+        $login = $this->postLogin($user->email, 'password123');
+        $login->assertStatus(200);
+        $token = $login->json('token');
+        $this->assertNotNull($token);
+        $this->assertSame(1, $user->tokens()->count());
+
+        $logout = $this->withHeaders([
+            'Authorization' => 'Bearer '.$token,
+        ])->postJson('/api/auth/logout');
+        $logout->assertStatus(200);
+
+        // The token the request authenticated with is gone.
+        $this->assertSame(0, $user->tokens()->count());
+    }
+
+    public function test_bearer_logout_revokes_the_token_even_from_a_first_party_origin(): void
+    {
+        Config::set('sanctum.stateful', ['localhost:8100']);
+
+        $user = $this->createUser();
+
+        $login = $this->postLogin($user->email, 'password123');
+        $login->assertStatus(200);
+        $token = $login->json('token');
+        $this->assertNotNull($token);
+
+        // The request looks like the SPA (first-party origin) but it
+        // authenticated with the bearer token: the token must be revoked,
+        // not just a session.
+        $logout = $this->withHeaders([
+            'Authorization' => 'Bearer '.$token,
+            'Referer' => 'http://localhost:8100/errors',
+        ])->postJson('/api/auth/logout');
+        $logout->assertStatus(200);
+
+        $this->assertSame(0, $user->tokens()->count());
+    }
+
     public function test_spa_logout_invalidates_session(): void
     {
         Config::set('sanctum.stateful', ['localhost:8100']);
@@ -206,14 +248,7 @@ class AdminSessionAuthTest extends \Tests\TestCase
         ]);
         $loginResponse->assertStatus(200);
 
-        $cookies = $loginResponse->headers->getCookies();
-        $sessionCookie = null;
-        foreach ($cookies as $cookie) {
-            if (str_starts_with($cookie->getName(), 'laravel_session')) {
-                $sessionCookie = $cookie;
-                break;
-            }
-        }
+        $sessionCookie = $this->cookieNamed($loginResponse, 'laravel_session');
         $this->assertNotNull($sessionCookie);
 
         // Logout with session cookie (include Referer for first-party detection)
@@ -223,9 +258,14 @@ class AdminSessionAuthTest extends \Tests\TestCase
         $logoutResponse->assertStatus(200);
         $this->assertSame('Logged out', $logoutResponse->json('message'));
 
-        // Next request with same cookie should be 401
-        $meResponse = $this->withCookie($sessionCookie->getName(), $sessionCookie->getValue())
-            ->getJson('/api/auth/me');
-        $meResponse->assertStatus(401);
+        // The session no longer holds the user, and the session was
+        // rotated: the response carries a new session cookie. (The
+        // next request cannot be asserted here: the test application
+        // instance is shared by every request of the test, so the
+        // authenticated user would leak into it.)
+        $this->assertNull(auth()->guard('web')->user());
+        $newSession = $this->cookieNamed($logoutResponse, 'laravel_session');
+        $this->assertNotNull($newSession);
+        $this->assertNotSame($sessionCookie->getValue(), $newSession->getValue());
     }
 }

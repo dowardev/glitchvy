@@ -72,7 +72,9 @@ abstract class TestCase extends OrchestraTestCase
             });
 
             $router->post('auth/login', [AuthController::class, 'login'])->middleware('throttle:glitchvy-login')->name('auth.login');
-            $router->post('auth/logout', [AuthController::class, 'logout'])->name('auth.logout');
+            $router->post('auth/logout', [AuthController::class, 'logout'])
+                ->middleware('auth:sanctum')
+                ->name('auth.logout');
             $router->get('auth/me', [AuthController::class, 'me'])->middleware('auth:sanctum')->name('auth.me');
 
             // CSRF cookie endpoint for SPA

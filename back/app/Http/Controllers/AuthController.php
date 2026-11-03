@@ -58,28 +58,29 @@ class AuthController extends Controller
 
     /**
      * Handle a logout request.
+     *
+     * The branch follows HOW the request was authenticated, not how the
+     * request looks: a bearer token authenticated client revokes its
+     * token, a browser session ends the session. Deciding by origin
+     * instead would leave the token of a first-party request alive.
      */
     public function logout(Request $request)
     {
-        // Detect first-party SPA request via Sanctum's 'sanctum' request attribute
-        $isFirstParty = $request->attributes->get('sanctum') === true;
+        $token = $request->user()?->currentAccessToken();
 
-        if ($isFirstParty) {
-            // SPA logout: invalidate session, regenerate CSRF token
-            Auth::guard('web')->logout();
-            $request->session()->invalidate();
-            $request->session()->regenerateToken();
+        if ($token instanceof PersonalAccessToken) {
+            // API client: revoke the token it authenticated with.
+            $token->delete();
 
             return response()->json(['message' => 'Logged out']);
         }
 
-        // API client logout: delete current access token. A session
-        // authenticated user has no token to delete, so the token is
-        // checked before it is removed.
-        $token = $request->user()?->currentAccessToken();
+        // Browser session: end it and rotate the CSRF token.
+        Auth::guard('web')->logout();
 
-        if ($token instanceof PersonalAccessToken) {
-            $token->delete();
+        if ($request->hasSession()) {
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
         }
 
         return response()->json(['message' => 'Logged out']);
