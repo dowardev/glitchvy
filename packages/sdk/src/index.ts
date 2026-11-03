@@ -206,7 +206,13 @@ export async function getQueueStatus(): Promise<QueueStatus> {
 export async function shutdown(): Promise<void> {
   const state = getState();
   if (state.config) {
-    await flushQueue(state.config);
+    try {
+      await flushQueue(state.config);
+    } catch {
+      // A failing flush must not become an unhandled rejection for a
+      // consumer that calls `shutdown()` without awaiting it: the events
+      // stay in the queue and go out on the next boot.
+    }
   }
   uninstallAutoCapture();
   clearReportCallback();
