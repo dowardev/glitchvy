@@ -54,4 +54,4 @@ Route::get('auth/me', [AuthController::class, 'me'])->middleware('auth:sanctum')
 // SPA CSRF cookie endpoint (runs inside stateful middleware stack).
 Route::get('glitchvy/csrf-cookie', function () {
     return response()->noContent();
-})->name('glitchvy.csrf-cookie');
+})->middleware('throttle:glitchvy-csrf')->name('glitchvy.csrf-cookie');

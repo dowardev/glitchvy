@@ -80,7 +80,7 @@ abstract class TestCase extends OrchestraTestCase
             // CSRF cookie endpoint for SPA
             $router->get('glitchvy/csrf-cookie', function () {
                 return response()->noContent();
-            })->name('glitchvy.csrf-cookie');
+            })->middleware('throttle:glitchvy-csrf')->name('glitchvy.csrf-cookie');
         });
 
         // Register middleware alias

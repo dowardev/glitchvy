@@ -56,13 +56,21 @@ export function readCookie(name: string): string | null {
 
 let csrfCookieRequest: Promise<void> | null = null
 
+/** Forget the cached CSRF bootstrap, so the next request fetches a fresh token. */
+export function resetCsrfCookie(): void {
+  csrfCookieRequest = null
+}
+
 /**
  * Ask the API for the XSRF cookie, once. Every mutating request needs it
  * before the session cookie is accepted.
+ *
+ * @param force fetch a new token even when the browser already holds one
+ * (used after the API rejected the token we sent).
  */
-export function ensureCsrfCookie(): Promise<void> {
+export function ensureCsrfCookie(force = false): Promise<void> {
   // The cookie is already there: nothing to bootstrap.
-  if (readCookie('XSRF-TOKEN')) return Promise.resolve()
+  if (!force && readCookie('XSRF-TOKEN')) return Promise.resolve()
 
   if (!csrfCookieRequest) {
     csrfCookieRequest = request<{ ok: boolean }>('/glitchvy/csrf-cookie')
@@ -79,6 +87,7 @@ export function ensureCsrfCookie(): Promise<void> {
 async function request<T>(
   endpoint: string,
   options: RequestInit = {},
+  attempt = 0,
 ): Promise<T> {
   const url = `${API_BASE}${endpoint}`
   const method = (options.method ?? 'GET').toUpperCase()
@@ -110,6 +119,14 @@ async function request<T>(
     // it as a 0-status GlitchvyApiError so the UI can show a single
     // "cannot reach the server" message instead of an unhandled TypeError.
     throw new GlitchvyApiErrorImpl(0, 'NETWORK_UNREACHABLE', 'No se puede conectar al servidor')
+  }
+
+  // The API refused the CSRF token we sent: the session was rotated or
+  // the token expired. Bootstrap a new one and retry the request once.
+  if (response.status === 419 && attempt === 0 && MUTATING_METHODS.includes(method)) {
+    resetCsrfCookie()
+    await ensureCsrfCookie(true)
+    return request<T>(endpoint, options, attempt + 1)
   }
 
   if (!response.ok) {

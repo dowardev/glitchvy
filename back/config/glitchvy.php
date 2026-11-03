@@ -27,6 +27,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Rate Limit for the CSRF Cookie Endpoint
+    |--------------------------------------------------------------------------
+    |
+    | Format: "requests,minutes" (e.g. "60,1" = 60 requests per minute)
+    | Applied per IP. The endpoint starts a session for a first-party
+    | request, so it is bounded to keep the sessions table in check.
+    |
+    */
+    'csrf_rate_limit' => env('GLITCHVY_CSRF_RATE_LIMIT', '60,1'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Retention Days for Soft-Deleted Errors
     |--------------------------------------------------------------------------
     |

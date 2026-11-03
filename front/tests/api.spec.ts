@@ -144,6 +144,27 @@ describe('api client', () => {
     expect(url).not.toContain('limit=')
   })
 
+  it('retries a mutating request once with a fresh CSRF token after a 419', async () => {
+    const { api } = await loadClient()
+
+    let calls = 0
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url === '/api/glitchvy/csrf-cookie') {
+        document.cookie = 'XSRF-TOKEN=stale-token; path=/'
+        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      }
+      calls++
+      if (calls === 1) {
+        return { ok: false, status: 419, statusText: 'CSRF token mismatch', json: async () => ({ message: 'CSRF token mismatch.' }) }
+      }
+      return { ok: true, status: 200, json: async () => ({ message: 'Logged out' }) }
+    })
+
+    await api.logout()
+
+    expect(calls).toBe(2)
+  })
+
   it('screenshotUrl returns correct URL', async () => {
     const { api } = await loadClient()
     const url = api.screenshotUrl(123)

@@ -41,6 +41,7 @@ Key environment variables (see `.env.example`):
 | `GLITCHVY_STORAGE_DISK` | Filesystem disk for screenshots | `private` |
 | `GLITCHVY_RATE_LIMIT` | Ingest rate limit per project (`requests,minutes`) | `60,1` |
 | `GLITCHVY_LOGIN_RATE_LIMIT` | Admin login rate limit per IP and email (`requests,minutes`) | `5,1` |
+| `GLITCHVY_CSRF_RATE_LIMIT` | Rate limit of the CSRF cookie endpoint, per IP (`requests,minutes`) | `60,1` |
 | `SANCTUM_STATEFUL_DOMAINS` | Origins allowed to authenticate with the session cookie | `localhost,localhost:8100,127.0.0.1,127.0.0.1:8100,::1` |
 | `CORS_ALLOWED_ORIGINS` | Origins allowed to call the API with credentials | `http://localhost:8100,http://127.0.0.1:8100` |
 | `SESSION_SAME_SITE` | SameSite attribute of the session cookie | `lax` |
@@ -121,7 +122,7 @@ Two ways to authenticate:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/glitchvy/csrf-cookie` | Bootstrap the XSRF token cookie (browser session) |
+| `GET` | `/api/glitchvy/csrf-cookie` | Bootstrap the XSRF token cookie (browser session, rate limited per IP) |
 | `GET` | `/api/glitchvy/errors` | List errors (cursor paginated, filterable) |
 | `GET` | `/api/glitchvy/errors/{id}` | Show error with screenshots |
 | `PATCH` | `/api/glitchvy/errors/{id}/status` | Update status (open/in_progress/resolved/ignored) |
