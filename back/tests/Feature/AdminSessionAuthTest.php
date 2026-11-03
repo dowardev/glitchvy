@@ -7,6 +7,7 @@ namespace Tests\Feature;
 use App\Models\User;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Hash;
+use Tests\Support\StrictValidateCsrfToken;
 
 class AdminSessionAuthTest extends \Tests\TestCase
 {
@@ -129,6 +130,68 @@ class AdminSessionAuthTest extends \Tests\TestCase
             }
         }
         $this->assertNotNull($xsrfCookie, 'XSRF-TOKEN cookie should be set');
+    }
+
+    /**
+     * A mutating request without the XSRF token must be refused, and the
+     * same request must go through when the token is echoed back. The
+     * framework skips the token validation while the test suite runs, so
+     * the strict middleware stands in for the production one.
+     */
+    public function test_mutating_request_without_the_xsrf_token_is_refused(): void
+    {
+        Config::set('sanctum.stateful', ['localhost:8100']);
+        Config::set('sanctum.middleware.validate_csrf_token', StrictValidateCsrfToken::class);
+
+        $user = $this->createUser();
+
+        // Bootstrap the cookie the way the SPA does before it logs in.
+        $bootstrap = $this->get('/api/glitchvy/csrf-cookie', [
+            'Referer' => 'http://localhost:8100/',
+        ]);
+        $bootstrap->assertStatus(204);
+
+        $xsrf = $this->cookieNamed($bootstrap, 'XSRF-TOKEN');
+        $session = $this->cookieNamed($bootstrap, 'laravel_session');
+        $this->assertNotNull($xsrf, 'XSRF-TOKEN cookie should be set');
+        $this->assertNotNull($session, 'session cookie should be set');
+
+        // Without the token: refused.
+        $withoutToken = $this->withCookie($session->getName(), $session->getValue())
+            ->withHeaders(['Referer' => 'http://localhost:8100/errors'])
+            ->postJson('/api/auth/login', [
+                'email' => $user->email,
+                'password' => 'password123',
+            ]);
+        $withoutToken->assertStatus(419);
+
+        // With the token: the login goes through.
+        $withToken = $this->withCookie($session->getName(), $session->getValue())
+            ->withCookie('XSRF-TOKEN', $xsrf->getValue())
+            ->withHeaders([
+                'Referer' => 'http://localhost:8100/errors',
+                'X-XSRF-TOKEN' => $xsrf->getValue(),
+            ])
+            ->postJson('/api/auth/login', [
+                'email' => $user->email,
+                'password' => 'password123',
+            ]);
+        $withToken->assertStatus(200);
+        $this->assertNull($withToken->json('token'));
+    }
+
+    /**
+     * Find a cookie by name in a response.
+     */
+    private function cookieNamed(\Illuminate\Testing\TestResponse $response, string $name): ?\Symfony\Component\HttpFoundation\Cookie
+    {
+        foreach ($response->headers->getCookies() as $cookie) {
+            if ($cookie->getName() === $name) {
+                return $cookie;
+            }
+        }
+
+        return null;
     }
 
     public function test_spa_logout_invalidates_session(): void
