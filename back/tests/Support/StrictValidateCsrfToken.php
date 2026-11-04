@@ -4,7 +4,7 @@
 
 namespace Tests\Support;
 
-use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
+use App\Http\Middleware\SkipCsrfForLogout;
 
 /**
  * CSRF middleware that does not skip validation while the test suite runs.
@@ -12,9 +12,10 @@ use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
  * The framework's own middleware ignores the token mismatch when the
  * application runs in a unit test, so a test can never prove that a
  * mutating request without the token is refused. This subclass keeps the
- * production behaviour, which is what the browser session relies on.
+ * production behaviour (including the routes the application exempts),
+ * which is what the browser session relies on.
  */
-class StrictValidateCsrfToken extends PreventRequestForgery
+class StrictValidateCsrfToken extends SkipCsrfForLogout
 {
     /**
      * Do not skip the token validation while testing.

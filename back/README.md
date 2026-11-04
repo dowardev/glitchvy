@@ -120,6 +120,13 @@ Two ways to authenticate:
 - **API client.** A login from anywhere else returns a bearer token:
   `Authorization: Bearer <sanctum_token>`.
 
+Opening a session revokes the personal access tokens the previous SPA flow
+issued: those tokens never expired on their own, so they would have kept
+working after the session ended. `POST /api/auth/logout` is exempt from the CSRF
+check (it still requires authentication and only ends the caller's own session),
+so a bearer client that sends a first-party origin can revoke its token instead
+of getting a `419`.
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/glitchvy/csrf-cookie` | Bootstrap the XSRF token cookie (browser session, rate limited per IP) |

@@ -216,6 +216,8 @@ class AdminSessionAuthTest extends \Tests\TestCase
     public function test_bearer_logout_revokes_the_token_even_from_a_first_party_origin(): void
     {
         Config::set('sanctum.stateful', ['localhost:8100']);
+        // The strict middleware proves the production CSRF behaviour.
+        Config::set('sanctum.middleware.validate_csrf_token', StrictValidateCsrfToken::class);
 
         $user = $this->createUser();
 
@@ -226,7 +228,8 @@ class AdminSessionAuthTest extends \Tests\TestCase
 
         // The request looks like the SPA (first-party origin) but it
         // authenticated with the bearer token: the token must be revoked,
-        // not just a session.
+        // not just a session. It carries no XSRF token, so the logout
+        // route must not depend on one.
         $logout = $this->withHeaders([
             'Authorization' => 'Bearer '.$token,
             'Referer' => 'http://localhost:8100/errors',
@@ -234,6 +237,39 @@ class AdminSessionAuthTest extends \Tests\TestCase
         $logout->assertStatus(200);
 
         $this->assertSame(0, $user->tokens()->count());
+    }
+
+    public function test_the_logout_route_is_exempt_from_the_csrf_check(): void
+    {
+        // The test environment does not load the application config
+        // directory, so the production wiring is pinned against the file
+        // itself: the middleware that leaves the logout route out is the
+        // one the application configures.
+        $config = require __DIR__ . '/../../config/sanctum.php';
+
+        $this->assertSame(
+            \App\Http\Middleware\SkipCsrfForLogout::class,
+            $config['middleware']['validate_csrf_token']
+        );
+    }
+
+    public function test_spa_login_revokes_the_tokens_the_previous_flow_issued(): void
+    {
+        Config::set('sanctum.stateful', ['localhost:8100']);
+
+        $user = $this->createUser();
+        $legacy = $user->createToken('legacy-spa')->plainTextToken;
+        $this->assertSame(1, $user->tokens()->count());
+
+        $login = $this->postLogin($user->email, 'password123', [
+            'Referer' => 'http://localhost:8100/errors',
+        ]);
+        $login->assertStatus(200);
+        $this->assertNull($login->json('token'));
+
+        // The session is the credential now: the old token is gone.
+        $this->assertSame(0, $user->tokens()->count());
+        $this->assertNull(\Laravel\Sanctum\PersonalAccessToken::findToken($legacy));
     }
 
     public function test_spa_logout_invalidates_session(): void

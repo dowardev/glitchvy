@@ -105,6 +105,12 @@ abstract class TestCase extends OrchestraTestCase
         ]);
         $app['config']->set('app.key', 'base64:'.base64_encode(str_repeat('a', 32)));
         $app['config']->set('sanctum.expiration', null);
+        // Mirrors config/sanctum.php: the test environment does not load
+        // the application config directory.
+        $app['config']->set(
+            'sanctum.middleware.validate_csrf_token',
+            \App\Http\Middleware\SkipCsrfForLogout::class
+        );
         $app['config']->set('auth.guards.sanctum', [
             'driver' => 'sanctum',
             'provider' => 'users',

@@ -35,6 +35,11 @@ class AuthController extends Controller
         $isFirstParty = $request->attributes->get('sanctum') === true;
 
         if ($isFirstParty) {
+            // The previous SPA flow issued a persistent token on every
+            // login. Those tokens keep working on their own, so opening
+            // a session revokes them: the session is the credential now.
+            $user->tokens()->delete();
+
             // SPA login: use session guard, regenerate session ID
             Auth::guard('web')->login($user);
             $request->session()->regenerate();
