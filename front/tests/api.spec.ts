@@ -79,7 +79,8 @@ describe('api client', () => {
     mockFetch.mockImplementation(async (url: string) => {
       if (url === '/api/glitchvy/csrf-cookie') {
         document.cookie = 'XSRF-TOKEN=token-value; path=/'
-        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+        // The endpoint answers 204 without a body: its effect is the cookie.
+        return { ok: true, status: 204 }
       }
       return { ok: true, status: 200, json: async () => ({ message: 'Logged out' }) }
     })
@@ -94,11 +95,16 @@ describe('api client', () => {
 
   it('throws GlitchvyApiError on non-ok response', async () => {
     const { api, GlitchvyApiError } = await loadClient()
-    mockFetch.mockResolvedValue({
-      ok: false,
-      status: 401,
-      statusText: 'Unauthorized',
-      json: async () => ({ code: 'UNAUTHENTICATED', message: 'Invalid credentials' }),
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url === '/api/glitchvy/csrf-cookie') {
+        return { ok: true, status: 204 }
+      }
+      return {
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        json: async () => ({ code: 'UNAUTHENTICATED', message: 'Invalid credentials' }),
+      }
     })
 
     let caughtError: unknown
@@ -151,7 +157,7 @@ describe('api client', () => {
     mockFetch.mockImplementation(async (url: string) => {
       if (url === '/api/glitchvy/csrf-cookie') {
         document.cookie = 'XSRF-TOKEN=stale-token; path=/'
-        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+        return { ok: true, status: 204 }
       }
       calls++
       if (calls === 1) {
@@ -163,6 +169,23 @@ describe('api client', () => {
     await api.logout()
 
     expect(calls).toBe(2)
+  })
+
+  it('survives a CSRF bootstrap that answers without a body', async () => {
+    const { api } = await loadClient()
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url === '/api/glitchvy/csrf-cookie') {
+        document.cookie = 'XSRF-TOKEN=token-value; path=/'
+        return { ok: true, status: 200 }
+      }
+      return { ok: true, status: 200, json: async () => ({ message: 'Logged out' }) }
+    })
+
+    await api.logout()
+
+    const logoutCall = mockFetch.mock.calls.find(([url]) => url === '/api/auth/logout')
+    expect(logoutCall).toBeDefined()
+    expect(logoutCall![1].headers['X-XSRF-TOKEN']).toBe('token-value')
   })
 
   it('screenshotUrl returns correct URL', async () => {

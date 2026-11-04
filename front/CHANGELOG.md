@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - A mutating request that the API refuses with `419` (stale CSRF token) now bootstraps a fresh token and is retried once, instead of failing the action outright.
+- The CSRF bootstrap no longer goes through the JSON request path: the endpoint answers `204` without a body (its effect is the cookie it sets), so reading a body from it was a contract mismatch.
 - The admin token is no longer kept in `localStorage`. The session lives in an httpOnly cookie the browser attaches on its own, and the SPA restores the session from `GET /api/auth/me` on boot. A token in `localStorage` was readable by any XSS and survived the browser session.
 - The page size is sent as `per_page`, the parameter the API reads. The SPA sent `limit`, which the API ignored, so the error list was always 20 rows.
 - The error status is edited through an `ion-select` rather than an `ion-segment`. A segment is a navigation control, not a control for changing a single value.

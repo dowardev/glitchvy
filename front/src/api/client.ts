@@ -73,15 +73,44 @@ export function ensureCsrfCookie(force = false): Promise<void> {
   if (!force && readCookie('XSRF-TOKEN')) return Promise.resolve()
 
   if (!csrfCookieRequest) {
-    csrfCookieRequest = request<{ ok: boolean }>('/glitchvy/csrf-cookie')
-      .then(() => undefined)
-      .catch((err) => {
-        // A failed bootstrap must not poison the next attempt.
-        csrfCookieRequest = null
-        throw err
-      })
+    csrfCookieRequest = fetchCsrfCookie().catch((err) => {
+      // A failed bootstrap must not poison the next attempt.
+      csrfCookieRequest = null
+      throw err
+    })
   }
   return csrfCookieRequest
+}
+
+/**
+ * Fetch the CSRF cookie.
+ *
+ * The endpoint answers 204 without a body: its whole effect is the cookie
+ * it sets. It therefore does not go through the JSON request path, which
+ * would expect a body to read.
+ */
+async function fetchCsrfCookie(): Promise<void> {
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE}/glitchvy/csrf-cookie`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      credentials: 'include',
+    })
+  } catch {
+    throw new GlitchvyApiErrorImpl(0, 'NETWORK_UNREACHABLE', 'No se puede conectar al servidor')
+  }
+
+  if (!response.ok) {
+    throw new GlitchvyApiErrorImpl(
+      response.status,
+      'CSRF_BOOTSTRAP_FAILED',
+      'No se pudo iniciar la sesión',
+    )
+  }
 }
 
 async function request<T>(
