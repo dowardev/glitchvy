@@ -36,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `glitchvy:prune` defaults to the configured retention days (`GLITCHVY_RETENTION_DAYS`, default 30) instead of a hardcoded 30. `--days` still overrides it.
 - Screenshots are stored on the disk named by `GLITCHVY_STORAGE_DISK` (default `private`, falling back to the previous `GLITCHVY_SCREENSHOT_DISK`), instead of reading the environment directly.
 - The admin SPA authenticates with an httpOnly session cookie instead of a bearer token kept in `localStorage`. The login and logout endpoints keep serving API clients a bearer token.
-- Opening a session revokes the personal access tokens the previous SPA flow issued. Those tokens never expired on their own, so they would have kept working after the session ended.
+- Opening a session revokes the admin tokens that carry the default device name (`api-token`), which is what the previous SPA flow issued. Those tokens never expired on their own, so they would have kept working after the session ended. A client that names its device keeps its token.
 - `POST /api/auth/logout` is exempt from the CSRF check. It still requires authentication and only ends the caller's own session, and a bearer client that sends a first-party origin can now revoke its token instead of getting a `419`.
 - The ingest contract for `tags` is the object map the SDK sends and the dashboard renders (`{"source": "console.error"}`). A JSON list is now rejected with a clear message instead of being stored with numeric keys and rendered as `0: api`.
 

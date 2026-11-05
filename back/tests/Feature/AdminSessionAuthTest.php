@@ -258,8 +258,12 @@ class AdminSessionAuthTest extends \Tests\TestCase
         Config::set('sanctum.stateful', ['localhost:8100']);
 
         $user = $this->createUser();
-        $legacy = $user->createToken('legacy-spa')->plainTextToken;
-        $this->assertSame(1, $user->tokens()->count());
+        // The previous SPA flow logged in without a device name, so the
+        // backend named the token 'api-token'.
+        $legacy = $user->createToken('api-token')->plainTextToken;
+        // A client that names its device keeps its token.
+        $named = $user->createToken('ci-pipeline')->plainTextToken;
+        $this->assertSame(2, $user->tokens()->count());
 
         $login = $this->postLogin($user->email, 'password123', [
             'Referer' => 'http://localhost:8100/errors',
@@ -268,8 +272,9 @@ class AdminSessionAuthTest extends \Tests\TestCase
         $this->assertNull($login->json('token'));
 
         // The session is the credential now: the old token is gone.
-        $this->assertSame(0, $user->tokens()->count());
         $this->assertNull(\Laravel\Sanctum\PersonalAccessToken::findToken($legacy));
+        $this->assertNotNull(\Laravel\Sanctum\PersonalAccessToken::findToken($named));
+        $this->assertSame(1, $user->tokens()->count());
     }
 
     public function test_spa_logout_invalidates_session(): void
