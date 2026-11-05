@@ -180,20 +180,6 @@ class AdminSessionAuthTest extends \Tests\TestCase
         $this->assertNull($withToken->json('token'));
     }
 
-    /**
-     * Find a cookie by name in a response.
-     */
-    private function cookieNamed(\Illuminate\Testing\TestResponse $response, string $name): ?\Symfony\Component\HttpFoundation\Cookie
-    {
-        foreach ($response->headers->getCookies() as $cookie) {
-            if ($cookie->getName() === $name) {
-                return $cookie;
-            }
-        }
-
-        return null;
-    }
-
     public function test_api_client_logout_revokes_the_token(): void
     {
         $user = $this->createUser();
@@ -253,7 +239,7 @@ class AdminSessionAuthTest extends \Tests\TestCase
         );
     }
 
-    public function test_spa_login_revokes_the_tokens_the_previous_flow_issued(): void
+    public function test_spa_login_leaves_the_api_client_tokens_alone(): void
     {
         Config::set('sanctum.stateful', ['localhost:8100']);
 
@@ -263,7 +249,6 @@ class AdminSessionAuthTest extends \Tests\TestCase
         $legacy = $user->createToken('api-token')->plainTextToken;
         // A client that names its device keeps its token.
         $named = $user->createToken('ci-pipeline')->plainTextToken;
-        $this->assertSame(2, $user->tokens()->count());
 
         $login = $this->postLogin($user->email, 'password123', [
             'Referer' => 'http://localhost:8100/errors',
@@ -271,10 +256,10 @@ class AdminSessionAuthTest extends \Tests\TestCase
         $login->assertStatus(200);
         $this->assertNull($login->json('token'));
 
-        // The session is the credential now: the old token is gone.
-        $this->assertNull(\Laravel\Sanctum\PersonalAccessToken::findToken($legacy));
+        // Opening a session must not invalidate an unrelated credential.
+        $this->assertNotNull(\Laravel\Sanctum\PersonalAccessToken::findToken($legacy));
         $this->assertNotNull(\Laravel\Sanctum\PersonalAccessToken::findToken($named));
-        $this->assertSame(1, $user->tokens()->count());
+        $this->assertSame(2, $user->tokens()->count());
     }
 
     public function test_spa_logout_invalidates_session(): void

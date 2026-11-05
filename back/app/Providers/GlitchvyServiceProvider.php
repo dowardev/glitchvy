@@ -70,32 +70,6 @@ class GlitchvyServiceProvider extends ServiceProvider
             return Limit::perMinutes($decayMinutes, $maxAttempts)
                 ->by($project->id);
         });
-
-        // Admin login rate limiter (per IP + email)
-        RateLimiter::for('glitchvy-login', function (Request $request) {
-            $config = config('glitchvy.login_rate_limit', '5,1');
-            [$maxAttempts, $decayMinutes] = $this->parseRateLimit($config);
-
-            $email = $request->input('email', 'unknown');
-            $key = $request->ip().'|'.$email;
-
-            return Limit::perMinutes($decayMinutes, $maxAttempts)
-                ->by($key);
-        });
-
-        // CSRF cookie endpoint rate limiter (per IP)
-        //
-        // The endpoint starts a session for a first-party request, and a
-        // first-party request is recognised by a header the caller
-        // controls. Bounding it per IP keeps a spoofed Origin from
-        // filling the sessions table.
-        RateLimiter::for('glitchvy-csrf', function (Request $request) {
-            $config = config('glitchvy.csrf_rate_limit', '60,1');
-            [$maxAttempts, $decayMinutes] = $this->parseRateLimit($config);
-
-            return Limit::perMinutes($decayMinutes, $maxAttempts)
-                ->by($request->ip());
-        });
     }
 
     /**

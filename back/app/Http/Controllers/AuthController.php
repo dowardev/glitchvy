@@ -35,14 +35,12 @@ class AuthController extends Controller
         $isFirstParty = $request->attributes->get('sanctum') === true;
 
         if ($isFirstParty) {
-            // The previous SPA flow issued a persistent token named
-            // 'api-token' on every login. Those tokens keep working on
-            // their own, so opening a session revokes them: the session
-            // is the credential now. A client that named its device
-            // keeps its token.
-            $user->tokens()->where('name', 'api-token')->delete();
-
-            // SPA login: use session guard, regenerate session ID
+            // SPA login: use session guard, regenerate session ID.
+            //
+            // No token is revoked here: an admin token may belong to a
+            // script or a CI job that never used the SPA. The tokens the
+            // previous SPA flow issued are retired on purpose, by the
+            // operator (see back/README.md).
             Auth::guard('web')->login($user);
             $request->session()->regenerate();
 

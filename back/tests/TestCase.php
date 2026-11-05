@@ -18,6 +18,7 @@ use App\Providers\GlitchvyServiceProvider;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Route;
 use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
+use App\Http\Middleware\ThrottleFirstPartyRequests;
 use Orchestra\Testbench\TestCase as OrchestraTestCase;
 
 abstract class TestCase extends OrchestraTestCase
@@ -46,8 +47,9 @@ abstract class TestCase extends OrchestraTestCase
 
     protected function defineRoutes($router)
     {
-        // Apply EnsureFrontendRequestsAreStateful to the api group
-        $router->prefix('api')->middleware([EnsureFrontendRequestsAreStateful::class])->group(function () use ($router) {
+        // Mirrors routes/api.php: the stateful stack is per route, after
+        // the throttle that must run before a session is started.
+        $router->prefix('api')->group(function () use ($router) {
             $router->post('glitchvy/errors', [IngestController::class, 'store'])
                 ->middleware(['glitchvy.api', 'throttle:glitchvy-ingest'])
                 ->name('glitchvy.errors.store');
@@ -57,7 +59,7 @@ abstract class TestCase extends OrchestraTestCase
                 ->whereNumber('id')
                 ->name('glitchvy.screenshot.upload');
 
-            $router->middleware('auth:sanctum')->prefix('glitchvy')->group(function () use ($router) {
+            $router->middleware([EnsureFrontendRequestsAreStateful::class, 'auth:sanctum'])->prefix('glitchvy')->group(function () use ($router) {
                 $router->get('errors', [AdminErrorController::class, 'index'])->name('glitchvy.errors.index');
                 $router->get('errors/{id}', [AdminErrorController::class, 'show'])->whereNumber('id')->name('glitchvy.errors.show');
                 $router->patch('errors/{id}/status', [AdminErrorController::class, 'updateStatus'])->whereNumber('id')->name('glitchvy.errors.status');
@@ -65,26 +67,39 @@ abstract class TestCase extends OrchestraTestCase
                 $router->get('errors/{id}/screenshot', [AdminScreenshotController::class, 'show'])->whereNumber('id')->name('glitchvy.screenshot.show');
             });
 
-            $router->middleware('auth:sanctum')->group(function () use ($router) {
+            $router->middleware([EnsureFrontendRequestsAreStateful::class, 'auth:sanctum'])->group(function () use ($router) {
                 $router->get('projects', [AdminProjectController::class, 'index'])->name('projects.index');
                 $router->post('projects', [AdminProjectController::class, 'store'])->name('projects.store');
                 $router->post('projects/{id}/api-keys', [AdminProjectController::class, 'createApiKey'])->whereNumber('id')->name('projects.api-keys.store');
             });
 
-            $router->post('auth/login', [AuthController::class, 'login'])->middleware('throttle:glitchvy-login')->name('auth.login');
+            $router->post('auth/login', [AuthController::class, 'login'])
+                ->middleware([ThrottleFirstPartyRequests::class.':login_rate_limit,ip_email', EnsureFrontendRequestsAreStateful::class])
+                ->name('auth.login');
             $router->post('auth/logout', [AuthController::class, 'logout'])
-                ->middleware('auth:sanctum')
+                ->middleware([EnsureFrontendRequestsAreStateful::class, 'auth:sanctum'])
                 ->name('auth.logout');
-            $router->get('auth/me', [AuthController::class, 'me'])->middleware('auth:sanctum')->name('auth.me');
+            $router->get('auth/me', [AuthController::class, 'me'])
+                ->middleware([EnsureFrontendRequestsAreStateful::class, 'auth:sanctum'])
+                ->name('auth.me');
 
             // CSRF cookie endpoint for SPA
             $router->get('glitchvy/csrf-cookie', function () {
                 return response()->noContent();
-            })->middleware('throttle:glitchvy-csrf')->name('glitchvy.csrf-cookie');
+            })->middleware([ThrottleFirstPartyRequests::class, EnsureFrontendRequestsAreStateful::class])
+                ->name('glitchvy.csrf-cookie');
         });
 
         // Register middleware alias
         $router->aliasMiddleware('glitchvy.api', AuthenticateProjectApiKey::class);
+    }
+
+    /**
+     * Find a cookie by name in a response.
+     */
+    protected function cookieNamed(\Illuminate\Testing\TestResponse $response, string $name): ?\Symfony\Component\HttpFoundation\Cookie
+    {
+        return collect($response->headers->getCookies())->first(fn ($cookie) => $cookie->getName() === $name);
     }
 
     protected function getPackageProviders($app)
