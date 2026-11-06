@@ -43,7 +43,7 @@ Key environment variables (see `.env.example`):
 | `GLITCHVY_LOGIN_RATE_LIMIT` | Admin login rate limit per IP and email (`requests,minutes`) | `5,1` |
 | `GLITCHVY_CSRF_RATE_LIMIT` | Rate limit of the CSRF cookie endpoint, per IP (`requests,minutes`) | `60,1` |
 | `SANCTUM_STATEFUL_DOMAINS` | Origins allowed to authenticate with the session cookie | `localhost,localhost:8100,127.0.0.1,127.0.0.1:8100,::1` |
-| `CORS_ALLOWED_ORIGINS` | Origins allowed to call the API with credentials | `http://localhost:8100,http://127.0.0.1:8100` |
+| `CORS_ALLOWED_ORIGINS` | Origins allowed to call the API (`*` by default: the SDK posts from the consumer app's own origin) | `*` |
 | `SESSION_SAME_SITE` | SameSite attribute of the session cookie | `lax` |
 | `SESSION_SECURE_COOKIE` | Send the session cookie over HTTPS only | `false` |
 

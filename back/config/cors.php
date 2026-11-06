@@ -17,11 +17,21 @@ return [
     |
     */
 
+    | The ingest endpoints are called by the SDK from the browser of
+    | every consumer application, from that application's own origin.
+    | The default therefore allows any origin; set CORS_ALLOWED_ORIGINS
+    | to a comma separated list to narrow it down.
+    |
+    */
+
     'paths' => ['api/*', 'sanctum/csrf-cookie'],
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => explode(',', env('CORS_ALLOWED_ORIGINS', 'http://localhost:8100,http://127.0.0.1:8100')),
+    'allowed_origins' => array_values(array_filter(array_map(
+        'trim',
+        explode(',', (string) env('CORS_ALLOWED_ORIGINS', '*'))
+    ))),
 
     'allowed_origins_patterns' => [],
 

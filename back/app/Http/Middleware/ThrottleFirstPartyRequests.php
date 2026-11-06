@@ -45,7 +45,9 @@ class ThrottleFirstPartyRequests
             $key .= '|'.strtolower((string) $request->input('email', ''));
         }
 
-        if (RateLimiter::tooManyAttempts($key, $attempts)) {
+        // One atomic step: a check followed by a hit would let two
+        // concurrent requests both pass the check.
+        if (! RateLimiter::attempt($key, $attempts, fn () => true, $decay * 60)) {
             // The same contract as the framework throttle: the message and
             // the rate limit headers a client reads to know when to retry.
             return response()->json(['message' => 'Too Many Attempts.'], 429, [
@@ -54,8 +56,6 @@ class ThrottleFirstPartyRequests
                 'Retry-After' => RateLimiter::availableIn($key),
             ]);
         }
-
-        RateLimiter::hit($key, $decay * 60);
 
         return $next($request);
     }

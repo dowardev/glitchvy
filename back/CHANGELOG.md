@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `config/glitchvy.php`, the one place the documented configuration lives: `GLITCHVY_RATE_LIMIT`, `GLITCHVY_LOGIN_RATE_LIMIT`, `GLITCHVY_RETENTION_DAYS` and `GLITCHVY_STORAGE_DISK`, all listed in `.env.example`.
 - A daily schedule for `glitchvy:prune`, so retention is enforced without a human running the command.
 - A `private` filesystem disk, the default place where screenshots are stored. It is not publicly accessible.
+- `config/cors.php`, with `CORS_ALLOWED_ORIGINS` to narrow it down. The default allows any origin: the SDK posts from the browser of the consumer application, from that application's own origin.
 - SPA session authentication: a first-party request (one whose origin is listed in `SANCTUM_STATEFUL_DOMAINS`) is logged in with the session guard and answers `token: null`. A plain API client still receives a bearer token.
 - `GET /api/glitchvy/csrf-cookie`, which bootstraps the `XSRF-TOKEN` cookie that a browser session echoes back in the `X-XSRF-TOKEN` header.
 - `config/cors.php`, with `supports_credentials` and no wildcard origin, plus the `SANCTUM_STATEFUL_DOMAINS` and `CORS_ALLOWED_ORIGINS` variables in `.env.example`.
