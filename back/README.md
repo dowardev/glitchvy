@@ -37,7 +37,7 @@ Key environment variables (see `.env.example`):
 |----------|-------------|---------|
 | `DB_CONNECTION` | Database driver | `sqlite` |
 | `DB_DATABASE` | Database path | `database/database.sqlite` |
-| `GLITCHVY_RETENTION_DAYS` | Days before pruning soft-deleted errors | `30` |
+| `GLITCHVY_RETENTION_DAYS` | Days before an error report is pruned | `30` |
 | `GLITCHVY_STORAGE_DISK` | Filesystem disk for screenshots | `private` |
 | `GLITCHVY_RATE_LIMIT` | Ingest rate limit per project (`requests,minutes`) | `60,1` |
 | `GLITCHVY_LOGIN_RATE_LIMIT` | Admin login rate limit per IP and email (`requests,minutes`) | `5,1` |

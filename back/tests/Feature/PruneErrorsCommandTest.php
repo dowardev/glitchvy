@@ -84,6 +84,30 @@ class PruneErrorsCommandTest extends \Tests\TestCase
         $this->assertStringContainsString('No error reports to prune', $output);
     }
 
+    public function test_prune_deletes_live_reports_past_the_retention(): void
+    {
+        Config::set('glitchvy.retention_days', 15);
+
+        $project = Project::factory()->create();
+
+        // Nothing soft deletes an error report, so a prune that only
+        // looked at the trashed rows would never delete anything.
+        $old = ErrorReport::factory()->create([
+            'project_id' => $project->id,
+            'created_at' => Carbon::now()->subDays(20),
+        ]);
+        $recent = ErrorReport::factory()->create([
+            'project_id' => $project->id,
+            'created_at' => Carbon::now()->subDays(2),
+        ]);
+
+        $exitCode = Artisan::call('glitchvy:prune');
+
+        $this->assertEquals(0, $exitCode);
+        $this->assertDatabaseMissing('error_reports', ['id' => $old->id]);
+        $this->assertDatabaseHas('error_reports', ['id' => $recent->id]);
+    }
+
     public function test_prune_command_uses_configured_retention_days_as_default(): void
     {
         Config::set('glitchvy.retention_days', 15);

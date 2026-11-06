@@ -42,8 +42,19 @@ class PruneErrorsCommand extends Command
 
         $cutoff = Carbon::now()->subDays($days);
 
-        $query = ErrorReport::onlyTrashed()
-            ->where('deleted_at', '<', $cutoff);
+        // Two kinds of rows are past the retention: the ones that were
+        // soft deleted before the cutoff, and the live ones created
+        // before it. Nothing soft deletes an error report, so a prune
+        // that only looked at the trashed rows would never delete
+        // anything.
+        $query = ErrorReport::withTrashed()
+            ->where(function ($query) use ($cutoff) {
+                $query->where('created_at', '<', $cutoff)
+                    ->orWhere(function ($query) use ($cutoff) {
+                        $query->whereNotNull('deleted_at')
+                            ->where('deleted_at', '<', $cutoff);
+                    });
+            });
 
         $count = $query->count();
 

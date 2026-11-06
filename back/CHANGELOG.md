@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The error status workflow is `open` → `in_progress` → `resolved`, with `ignored` for reports that will not be fixed. The pre-SPA values `triaged` and `closed` are gone from the schema, the model and the API.
 - `error_reports.event_id` is now `NOT NULL`. A unique index does not constrain NULLs, so an event without an id would have defeated the dedup guarantee. The ingestion endpoint mints a UUID when the payload carries none.
-- `glitchvy:prune` defaults to the configured retention days (`GLITCHVY_RETENTION_DAYS`, default 30) instead of a hardcoded 30. `--days` still overrides it.
+- `glitchvy:prune` defaults to the configured retention days (`GLITCHVY_RETENTION_DAYS`, default 30) instead of a hardcoded 30. `--days` still overrides it. It now prunes the live reports older than the retention as well: nothing soft deletes an error report, so a prune that only looked at the trashed rows would never delete anything.
 - Screenshots are stored on the disk named by `GLITCHVY_STORAGE_DISK` (default `private`, falling back to the previous `GLITCHVY_SCREENSHOT_DISK`), instead of reading the environment directly.
 - The admin SPA authenticates with an httpOnly session cookie instead of a bearer token kept in `localStorage`. The login and logout endpoints keep serving API clients a bearer token.
 - Opening a session revokes the admin tokens that carry the default device name (`api-token`), which is what the previous SPA flow issued. Those tokens never expired on their own, so they would have kept working after the session ended. A client that names its device keeps its token.
