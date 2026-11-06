@@ -17,7 +17,15 @@ class CsrfCookieRateLimitTest extends \Tests\TestCase
 
         $this->get('/api/glitchvy/csrf-cookie', $headers)->assertStatus(204);
         $this->get('/api/glitchvy/csrf-cookie', $headers)->assertStatus(204);
-        $this->get('/api/glitchvy/csrf-cookie', $headers)->assertStatus(429);
+
+        $refused = $this->get('/api/glitchvy/csrf-cookie', $headers);
+        $refused->assertStatus(429);
+
+        // The same contract as the framework throttle.
+        $refused->assertJson(['message' => 'Too Many Attempts.']);
+        $this->assertSame('2', $refused->headers->get('X-RateLimit-Limit'));
+        $this->assertSame('0', $refused->headers->get('X-RateLimit-Remaining'));
+        $this->assertNotNull($refused->headers->get('Retry-After'));
     }
 
     public function test_a_refused_csrf_request_does_not_start_a_session(): void

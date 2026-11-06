@@ -46,7 +46,13 @@ class ThrottleFirstPartyRequests
         }
 
         if (RateLimiter::tooManyAttempts($key, $attempts)) {
-            return response()->json(['message' => 'Too many requests.'], 429);
+            // The same contract as the framework throttle: the message and
+            // the rate limit headers a client reads to know when to retry.
+            return response()->json(['message' => 'Too Many Attempts.'], 429, [
+                'X-RateLimit-Limit' => $attempts,
+                'X-RateLimit-Remaining' => 0,
+                'Retry-After' => RateLimiter::availableIn($key),
+            ]);
         }
 
         RateLimiter::hit($key, $decay * 60);
