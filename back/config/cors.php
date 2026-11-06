@@ -15,8 +15,7 @@ return [
     |
     | To learn more: https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS
     |
-    */
-
+    |
     | The ingest endpoints are called by the SDK from the browser of
     | every consumer application, from that application's own origin.
     | The default therefore allows any origin; set CORS_ALLOWED_ORIGINS

@@ -17,7 +17,11 @@ class CorsConfigurationTest extends \Tests\TestCase
             'Origin' => 'https://consumer-app.example',
         ]);
 
-        $this->assertSame('*', $response->headers->get('Access-Control-Allow-Origin'));
+        // The origin is reflected: the endpoint answers any origin.
+        $this->assertSame(
+            'https://consumer-app.example',
+            $response->headers->get('Access-Control-Allow-Origin')
+        );
     }
 
     public function test_the_allowed_origins_are_configurable(): void

@@ -119,6 +119,14 @@ abstract class TestCase extends OrchestraTestCase
             'prefix' => '',
         ]);
         $app['config']->set('app.key', 'base64:'.base64_encode(str_repeat('a', 32)));
+        // The test environment does not load the application config
+        // directory, so the configuration under test would otherwise be
+        // invisible here (and a broken file would not be noticed).
+        foreach (['cors', 'glitchvy', 'sanctum'] as $file) {
+            $path = dirname(__DIR__).'/config/'.$file.'.php';
+            $app['config']->set($file, require $path);
+        }
+
         $app['config']->set('sanctum.expiration', null);
         // Mirrors config/sanctum.php: the test environment does not load
         // the application config directory.
