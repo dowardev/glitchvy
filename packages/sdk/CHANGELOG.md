@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-08
+
+> Hardening of `0.1.0` before it takes real traffic, tracked in [issue #6](https://gitlab.com/dowardev/glitchvy/-/issues/6).
+
+### Changed (breaking)
+
+- `shutdown()` is now async: it returns a `Promise<void>` instead of `void`. It drains the offline queue before it resets the state, so the events that were waiting are sent instead of being lost, and it never rejects (a failed flush keeps the events in IndexedDB for the next boot). **Callers that used the synchronous return value must `await` it** — `glitchvy.shutdown()` without `await` can end the process before the queue is flushed.
+
+### Fixed
+
+- The SDK `level` values did not match the backend enum. `reportError(err, ctx, 'warn')` was answered `422` and the event was lost, silently and forever (it was re-queued on every flush, permanently occupying a queue slot). The type now reaches the whole backend enum (`debug`, `info`, `warning`, `error`, `critical`), `warn` stays a public alias and is mapped to `warning` at the transport boundary.
+- `shutdown()` did not flush, although the README said it did. See the breaking change above.
+- `initErrorReporter()` in a runtime without a `window` permanently disabled auto-capture for that module instance. The hooks are now only marked as installed after the window check.
+
 ## [0.1.0] - 2026-10-27
 
 ### Added
