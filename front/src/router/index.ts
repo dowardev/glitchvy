@@ -57,6 +57,11 @@ export const router = createRouter({
 router.beforeEach(async (to: RouteLocationNormalized, from: RouteLocationNormalized, next: (to?: string | false | void) => void) => {
   const authStore = useAuthStore()
 
+  // The session lives in an httpOnly cookie, so the SPA can only learn
+  // whether it is logged in by asking the API. Wait for that answer
+  // before deciding where to send the user.
+  await authStore.restore()
+
   if (to.meta.requiresAuth && !authStore.isAuthenticated) {
     next('/login')
     return

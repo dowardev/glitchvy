@@ -4,7 +4,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { api, isGlitchvyApiError } from '@/api/client'
-import { useAuthStore } from './auth'
 import type { ErrorReportSummary, ErrorReportDetail, ErrorFilters, CursorPage, Status } from '@/types'
 
 export const useErrorsStore = defineStore('errors', () => {
@@ -17,10 +16,6 @@ export const useErrorsStore = defineStore('errors', () => {
   const detailLoading = ref(false)
   const error = ref<string | null>(null)
 
-  function getToken(): string {
-    return useAuthStore().token ?? ''
-  }
-
   async function fetchPage(cursor?: string): Promise<void> {
     loading.value = true
     error.value = null
@@ -29,7 +24,7 @@ export const useErrorsStore = defineStore('errors', () => {
       if (cursor) {
         requestFilters.cursor = cursor
       }
-      const response: CursorPage<ErrorReportSummary> = await api.listErrors(requestFilters, getToken())
+      const response: CursorPage<ErrorReportSummary> = await api.listErrors(requestFilters)
       list.value = response.data
       nextCursor.value = response.next_cursor
       prevCursor.value = response.prev_cursor
@@ -49,7 +44,7 @@ export const useErrorsStore = defineStore('errors', () => {
     detailLoading.value = true
     error.value = null
     try {
-      detail.value = await api.getError(id, getToken())
+      detail.value = await api.getError(id)
     } catch (err) {
       if (isGlitchvyApiError(err)) {
         error.value = err.message
@@ -65,7 +60,7 @@ export const useErrorsStore = defineStore('errors', () => {
   async function setStatus(id: number, status: Status): Promise<void> {
     error.value = null
     try {
-      const updated = await api.updateStatus(id, status, getToken())
+      const updated = await api.updateStatus(id, status)
       const index = list.value.findIndex(e => e.id === id)
       if (index !== -1) {
         list.value[index] = updated

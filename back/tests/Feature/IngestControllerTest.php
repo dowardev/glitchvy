@@ -41,7 +41,7 @@ class IngestControllerTest extends \Tests\TestCase
             'entity_type' => 'user',
             'entity_id' => 123,
             'operation' => 'create',
-            'tags' => ['api', 'validation'],
+            'tags' => ['api' => 'validation'],
             'data' => ['field' => 'email'],
             'user_id' => 456,
             'user_payload' => ['id' => 456, 'email' => 'test@example.com'],
@@ -87,5 +87,82 @@ class IngestControllerTest extends \Tests\TestCase
         ]);
 
         $response->assertStatus(422);
+    }
+
+    public function test_tags_as_an_object_are_stored(): void
+    {
+        [$project, $plainKey] = $this->createProjectWithKey();
+
+        $response = $this->withHeaders([
+            'Authorization' => 'Bearer '.$plainKey,
+        ])->postJson('/api/glitchvy/errors', [
+            'environment' => 'production',
+            'error_name' => 'TestError',
+            'error_message' => 'Test message',
+            'tags' => ['source' => 'console.error', 'area' => 'billing'],
+        ]);
+
+        $response->assertStatus(201);
+
+        $report = ErrorReport::where('project_id', $project->id)->firstOrFail();
+        $this->assertSame(['source' => 'console.error', 'area' => 'billing'], $report->tags);
+    }
+
+    public function test_tags_as_a_list_are_rejected(): void
+    {
+        [$project, $plainKey] = $this->createProjectWithKey();
+
+        $response = $this->withHeaders([
+            'Authorization' => 'Bearer '.$plainKey,
+        ])->postJson('/api/glitchvy/errors', [
+            'environment' => 'production',
+            'error_name' => 'TestError',
+            'error_message' => 'Test message',
+            'tags' => ['api', 'validation'],
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors('tags');
+        $this->assertStringContainsString(
+            'object of string values',
+            (string) $response->json('errors.tags.0')
+        );
+
+        $this->assertDatabaseCount('error_reports', 0);
+    }
+
+    public function test_tags_with_non_string_values_are_rejected(): void
+    {
+        [$project, $plainKey] = $this->createProjectWithKey();
+
+        $response = $this->withHeaders([
+            'Authorization' => 'Bearer '.$plainKey,
+        ])->postJson('/api/glitchvy/errors', [
+            'environment' => 'production',
+            'error_name' => 'TestError',
+            'error_message' => 'Test message',
+            'tags' => ['count' => 3],
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors('tags');
+    }
+
+    /**
+     * Create a project with an API key and return both.
+     */
+    private function createProjectWithKey(): array
+    {
+        $project = Project::factory()->create();
+        $plainKey = 'gv_'.Str::random(40);
+
+        ApiKey::create([
+            'project_id' => $project->id,
+            'name' => 'Test Key',
+            'key_hash' => Hash::make($plainKey),
+            'key_prefix' => substr($plainKey, 0, 8),
+        ]);
+
+        return [$project, $plainKey];
     }
 };

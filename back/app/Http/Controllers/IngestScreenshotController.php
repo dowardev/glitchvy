@@ -26,7 +26,7 @@ class IngestScreenshotController extends Controller
         ]);
 
         $file = $validated['file'];
-        $disk = env('GLITCHVY_SCREENSHOT_DISK', 'local');
+        $disk = config('glitchvy.storage_disk', 'private');
         $path = $file->store('screenshots', $disk);
 
         $screenshot = ErrorScreenshot::create([

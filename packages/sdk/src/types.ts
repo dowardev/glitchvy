@@ -39,7 +39,11 @@ export interface CaptureConfig {
   consoleError?: boolean;
 }
 
-export type ErrorLevel = 'error' | 'warn' | 'info';
+/**
+ * Error severity levels accepted by the backend.
+ * 'warn' is kept as a public alias for 'warning' for backwards compatibility.
+ */
+export type ErrorLevel = 'debug' | 'info' | 'warning' | 'error' | 'critical' | 'warn';
 
 export interface ErrorContext {
   entityType?: string;

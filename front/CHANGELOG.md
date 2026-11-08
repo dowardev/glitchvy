@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A strict Content-Security-Policy is injected into production builds (`script-src 'self'`, no inline script, `frame-ancestors 'none'`). The SPA shipped without one, so any XSS could run inline script and exfiltrate the admin session. The `connect-src` origin list is configurable with `VITE_GLITCHVY_CSP_CONNECT_SRC` for a deployment that serves the SPA from another host.
+- The SPA authenticates with an httpOnly session cookie. `GET /api/glitchvy/csrf-cookie` bootstraps the readable XSRF token that every mutating request echoes back in the `X-XSRF-TOKEN` header.
+
 - Initial release of the Vue 3 + Ionic 9 admin SPA.
 - Login (Sanctum), project list, project detail with API keys, error list with level/status/search filters, and error detail.
 - Error status workflow: `open` → `in_progress` → `resolved`, plus `ignored`, changed from the detail view.
@@ -19,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A mutating request that the API refuses with `419` (stale CSRF token) now bootstraps a fresh token and is retried once, instead of failing the action outright.
+- The CSRF bootstrap no longer goes through the JSON request path: the endpoint answers `204` without a body (its effect is the cookie it sets), so reading a body from it was a contract mismatch.
+- The admin token is no longer kept in `localStorage`. The session lives in an httpOnly cookie the browser attaches on its own, and the SPA restores the session from `GET /api/auth/me` on boot. A token in `localStorage` was readable by any XSS and survived the browser session.
+- The page size is sent as `per_page`, the parameter the API reads. The SPA sent `limit`, which the API ignored, so the error list was always 20 rows.
 - The error status is edited through an `ion-select` rather than an `ion-segment`. A segment is a navigation control, not a control for changing a single value.
 - The admin SPA sticks to stock Ionic: no `<style>` blocks, only Ionic utility classes and components, and an inline style only where no Ionic utility exists (the dark backdrop behind a fullscreen screenshot).
 - The project configuration files match the `ionic start` output. The non-stock additions (`@vitejs/plugin-legacy`, `eslint`, `eslint-plugin-vue`, `@vue/eslint-config-typescript`, `cypress`, `terser`) and the `test:e2e` and `lint` scripts that referenced them were removed.

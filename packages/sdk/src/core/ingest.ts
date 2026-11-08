@@ -71,6 +71,11 @@ function toInteger(value: unknown): number | undefined {
   return undefined;
 }
 
+/** Map the SDK's public level (including the 'warn' alias) to the backend enum. */
+function normalizeLevel(level: ErrorLevel): Exclude<ErrorLevel, 'warn'> {
+  return level === 'warn' ? 'warning' : level;
+}
+
 /**
  * Convert an SDK event into the payload the ingestion endpoint accepts.
  *
@@ -94,7 +99,7 @@ export function toIngestPayload(event: ReportEvent): IngestPayload {
   const route = truncate(event.route, MAX_ROUTE);
   if (route) payload.route = route;
   if (event.userAgent) payload.user_agent = event.userAgent;
-  if (event.level) payload.level = event.level;
+  if (event.level) payload.level = normalizeLevel(event.level);
 
   const errorType = truncate(event.error.type, MAX_ERROR_TYPE);
   if (errorType) payload.error_type = errorType;

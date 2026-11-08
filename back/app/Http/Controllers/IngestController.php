@@ -5,6 +5,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\ErrorReport;
+use App\Rules\StringMap;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -33,7 +34,7 @@ class IngestController extends Controller
             'entity_type' => 'nullable|string|max:100',
             'entity_id' => 'nullable|integer',
             'operation' => 'nullable|string|max:100',
-            'tags' => 'nullable|array',
+            'tags' => ['nullable', 'array', new StringMap],
             'data' => 'nullable|array',
             'user_id' => 'nullable|integer',
             'user_payload' => 'nullable|array',

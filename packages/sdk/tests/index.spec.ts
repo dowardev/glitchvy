@@ -27,13 +27,13 @@ const CFG = {
   retryBaseMs: 1,
 };
 
-beforeEach(() => {
-  shutdown();
+beforeEach(async () => {
+  await shutdown();
   vi.unstubAllGlobals();
 });
 
-afterEach(() => {
-  shutdown();
+afterEach(async () => {
+  await shutdown();
   vi.unstubAllGlobals();
 });
 
@@ -159,8 +159,9 @@ describe('reportError', () => {
     const fetchMock = vi.fn().mockRejectedValue(new Error('offline'));
     vi.stubGlobal('fetch', fetchMock);
     await reportError(new Error('will be queued'));
-    expect(await queue.size()).toBe(1);
+    // maxRetries: 1 means 2 attempts (attempt 0 + attempt 1) before queuing
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(await queue.size()).toBe(1);
   });
 });
 
@@ -174,10 +175,14 @@ describe('flush / getQueueSize', () => {
     vi.stubGlobal('fetch', fetchMock);
     initErrorReporter(CFG);
     await reportError(new Error('queued'));
+    // 2 failed attempts before queuing
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(await queue.size()).toBe(1);
 
     serveUp = true;
     await flush();
+    // flush makes 1 successful attempt
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(await queue.size()).toBe(0);
   });
 
@@ -210,17 +215,84 @@ describe('flush / getQueueSize', () => {
   });
 });
 
-describe('shutdown', () => {
-  it('clears auto-capture hooks (console.error no longer triggers report)', async () => {
+describe('shutdown (S6)', () => {
+  it('is async and returns a Promise<void>', async () => {
     initErrorReporter(CFG);
+    const result = shutdown();
+    expect(result).toBeInstanceOf(Promise);
+    await result;
+  });
+
+  it('flushes the offline queue before tearing down state', async () => {
+    let serveUp = false;
+    const fetchMock = vi.fn().mockImplementation(() => {
+      if (!serveUp) return Promise.reject(new Error('offline'));
+      return Promise.resolve({ ok: true, status: 202 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    initErrorReporter(CFG);
+    await reportError(new Error('queued-for-shutdown'));
+    // 2 failed attempts before queuing
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(await queue.size()).toBe(1);
+
+    serveUp = true;
+    await shutdown();
+    // shutdown flushes: 1 successful attempt
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(await queue.size()).toBe(0);
+  });
+
+  it('is safe to call when the SDK was never initialized', async () => {
+    await expect(shutdown()).resolves.toBeUndefined();
+  });
+
+  it('clears auto-capture hooks (console.error no longer triggers report)', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 202 });
     vi.stubGlobal('fetch', fetchMock);
-    shutdown();
+    initErrorReporter(CFG);
+    await shutdown();
+
     const original = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     // eslint-disable-next-line no-console
     console.error('boom');
     await new Promise((r) => setTimeout(r, 5));
     expect(fetchMock).not.toHaveBeenCalled();
     original.mockRestore();
+  });
+});
+
+describe('capture install flag (S7)', () => {
+  it('init without window leaves capture uninstalled; later init with window installs hooks', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetchMock);
+
+    // Simulate a runtime without a window (SSR).
+    const realWindow = globalThis.window;
+    vi.stubGlobal('window', undefined);
+
+    // First init without window
+    initErrorReporter(CFG);
+    await reportError(new Error('without-window'));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Shutdown to reset the initialized flag, then bring the window back
+    await shutdown();
+    vi.stubGlobal('window', realWindow);
+
+    // Set up spy BEFORE init so we catch the addEventListener calls
+    const addEventListenerSpy = vi.spyOn(window, 'addEventListener');
+    initErrorReporter(CFG);
+
+    // Trigger a console.error to verify hooks are installed
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    console.error('test-after-window');
+    await new Promise((r) => setTimeout(r, 5));
+    consoleSpy.mockRestore();
+
+    // Should have installed error listener
+    const registered = addEventListenerSpy.mock.calls.map((args) => args[0]).filter((t) => typeof t === 'string');
+    expect(registered).toContain('error');
+    addEventListenerSpy.mockRestore();
   });
 });

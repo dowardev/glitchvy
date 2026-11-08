@@ -6,6 +6,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Laravel\Sanctum\PersonalAccessToken;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
@@ -30,6 +31,26 @@ class AuthController extends Controller
             ]);
         }
 
+        // Detect first-party SPA request via Sanctum's 'sanctum' request attribute
+        $isFirstParty = $request->attributes->get('sanctum') === true;
+
+        if ($isFirstParty) {
+            // SPA login: use session guard, regenerate session ID.
+            //
+            // No token is revoked here: an admin token may belong to a
+            // script or a CI job that never used the SPA. The tokens the
+            // previous SPA flow issued are retired on purpose, by the
+            // operator (see back/README.md).
+            Auth::guard('web')->login($user);
+            $request->session()->regenerate();
+
+            return response()->json([
+                'user' => $user,
+                'token' => null,
+            ]);
+        }
+
+        // API client login: create personal access token
         $token = $user->createToken(
             $validated['device_name'] ?? 'api-token'
         )->plainTextToken;
@@ -42,10 +63,30 @@ class AuthController extends Controller
 
     /**
      * Handle a logout request.
+     *
+     * The branch follows HOW the request was authenticated, not how the
+     * request looks: a bearer token authenticated client revokes its
+     * token, a browser session ends the session. Deciding by origin
+     * instead would leave the token of a first-party request alive.
      */
     public function logout(Request $request)
     {
-        $request->user()->currentAccessToken()->delete();
+        $token = $request->user()?->currentAccessToken();
+
+        if ($token instanceof PersonalAccessToken) {
+            // API client: revoke the token it authenticated with.
+            $token->delete();
+
+            return response()->json(['message' => 'Logged out']);
+        }
+
+        // Browser session: end it and rotate the CSRF token.
+        Auth::guard('web')->logout();
+
+        if ($request->hasSession()) {
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+        }
 
         return response()->json(['message' => 'Logged out']);
     }

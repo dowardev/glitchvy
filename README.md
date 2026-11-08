@@ -93,14 +93,14 @@ pnpm install
 ionic s   # → http://localhost:8100
 ```
 
-`VITE_GLITCHVY_API_URL` defaults to `/api/glitchvy` (proxied to Laravel in dev). Set `VITE_GLITCHVY_PROXY_TARGET` if your Laravel isn't on :8000.
+`VITE_GLITCHVY_API_URL` defaults to `/api` (proxied to Laravel in dev). Set `VITE_GLITCHVY_PROXY_TARGET` if your Laravel isn't on :8000.
 
 ### SDK (consumer installable)
 
 In a real consumer app:
 
 ```bash
-pnpm add "git+https://gitlab.com/dowardev/glitchvy.git#v0.1.0" -w packages/sdk
+pnpm add "@dowardev/glitchvy"
 ```
 
 Then in your `main.ts`:
@@ -109,7 +109,7 @@ Then in your `main.ts`:
 import { initErrorReporter } from '@dowardev/glitchvy';
 initErrorReporter({
   ingestionUrl: 'https://errors.dowar.xyz/api/glitchvy/errors',
-  apiKey: 'gvy_proj_xxx',  // per-project, created in the admin
+  apiKey: 'gv_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',  // per-project, created in the admin
   appVersion: '0.78.0',
   environment: 'production',
 });
@@ -121,13 +121,13 @@ initErrorReporter({
 
 | Component | Status | Tests |
 |---|---|---|
-| `packages/sdk` | build (dual ESM+CJS) + types OK | 53/53 vitest ✓ |
-| `back/` (Laravel standalone) | `php artisan serve` works | 25/25 PHPUnit ✓ |
-| `front/` (Ionic CLI) | `ionic s` works | 31/31 vitest ✓ |
+| `packages/sdk` | build (dual ESM+CJS) + types OK | 86/86 vitest ✓ |
+| `back/` (Laravel standalone) | `php artisan serve` works | 53/53 PHPUnit ✓ |
+| `front/` (Ionic CLI) | `ionic s` works | 36/36 vitest ✓ |
 
 ## Out of scope (v0.x)
 
-Source maps · Performance monitoring · Session replay · Alerting (per-project listener on `Glitchvy\Events\ErrorReported`) · React/Svelte adapters · Non-Laravel server SDKs · Sentry-compatible ingestion · Publishing SDK to npm registry · Capacitor build of admin SPA · Self-hostable.
+Source maps · Performance monitoring · Session replay · Alerting (per-project listener on `Glitchvy\Events\ErrorReported`) · React/Svelte adapters · Non-Laravel server SDKs · Sentry-compatible ingestion · Capacitor build of admin SPA · Self-hostable.
 
 ## License
 
