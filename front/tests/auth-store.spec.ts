@@ -25,7 +25,6 @@ vi.mock('@/api/client', () => {
 import { api, GlitchvyApiError } from '@/api/client'
 
 const fakeUser = { id: 1, email: 'test@test.com', name: 'Test', created_at: '', updated_at: '' }
-const fakeToken = '1|fake-sanctum-token-abcdef123'
 
 describe('auth store', () => {
   let authStore: ReturnType<typeof import('@/stores/auth').useAuthStore>
@@ -44,22 +43,28 @@ describe('auth store', () => {
 
   it('initializes with no user', () => {
     expect(authStore.user).toBeNull()
-    expect(authStore.token).toBeNull()
     expect(authStore.isAuthenticated).toBe(false)
+    expect(authStore.ready).toBe(false)
   })
 
   it('logs in successfully', async () => {
-    vi.mocked(api.login).mockResolvedValueOnce({ user: fakeUser, token: fakeToken })
+    vi.mocked(api.login).mockResolvedValueOnce({ user: fakeUser, token: null })
 
     await authStore.login({ email: 'test@test.com', password: 'password' })
 
     expect(authStore.user).toEqual(fakeUser)
-    expect(authStore.token).toBe(fakeToken)
     expect(authStore.isAuthenticated).toBe(true)
-    expect(localStorage.getItem('glitchvy_user')).toBe(JSON.stringify(fakeUser))
-    expect(localStorage.getItem('glitchvy_token')).toBe(fakeToken)
     expect(authStore.loading).toBe(false)
     expect(authStore.error).toBeNull()
+  })
+
+  it('never stores the credential in the browser', async () => {
+    vi.mocked(api.login).mockResolvedValueOnce({ user: fakeUser, token: null })
+
+    await authStore.login({ email: 'test@test.com', password: 'password' })
+
+    expect(localStorage.getItem('glitchvy_token')).toBeNull()
+    expect(localStorage.getItem('glitchvy_user')).toBeNull()
   })
 
   it('handles login error with GlitchvyApiError', async () => {
@@ -69,7 +74,6 @@ describe('auth store', () => {
     await expect(authStore.login({ email: 'test@test.com', password: 'wrong' })).rejects.toThrow()
 
     expect(authStore.user).toBeNull()
-    expect(authStore.token).toBeNull()
     expect(authStore.isAuthenticated).toBe(false)
     expect(authStore.error).toBe('Invalid credentials')
     expect(authStore.loading).toBe(false)
@@ -84,26 +88,51 @@ describe('auth store', () => {
     expect(authStore.error).toBe('Error de conexión')
   })
 
-  it('logs out and clears user/token', async () => {
+  it('logs out and clears the user', async () => {
     authStore.user = fakeUser
-    authStore.token = fakeToken
-    localStorage.setItem('glitchvy_user', JSON.stringify(fakeUser))
-    localStorage.setItem('glitchvy_token', fakeToken)
 
     vi.mocked(api.logout).mockResolvedValueOnce(undefined)
 
     await authStore.logout()
 
     expect(authStore.user).toBeNull()
-    expect(authStore.token).toBeNull()
     expect(authStore.isAuthenticated).toBe(false)
-    expect(localStorage.getItem('glitchvy_user')).toBeNull()
     expect(localStorage.getItem('glitchvy_token')).toBeNull()
+    expect(localStorage.getItem('glitchvy_user')).toBeNull()
+  })
+
+  it('restores the session from the cookie on boot', async () => {
+    vi.mocked(api.getMe).mockResolvedValueOnce(fakeUser)
+
+    await authStore.restore()
+
+    expect(api.getMe).toHaveBeenCalledTimes(1)
+    expect(authStore.user).toEqual(fakeUser)
+    expect(authStore.isAuthenticated).toBe(true)
+    expect(authStore.ready).toBe(true)
+  })
+
+  it('restores the session only once', async () => {
+    vi.mocked(api.getMe).mockResolvedValue(fakeUser)
+
+    await authStore.restore()
+    await authStore.restore()
+
+    expect(api.getMe).toHaveBeenCalledTimes(1)
+  })
+
+  it('stays logged out when the cookie session is gone', async () => {
+    vi.mocked(api.getMe).mockRejectedValueOnce(new Error('Unauthorized'))
+
+    await authStore.restore()
+
+    expect(authStore.user).toBeNull()
+    expect(authStore.isAuthenticated).toBe(false)
+    expect(authStore.ready).toBe(true)
   })
 
   it('fetches me and updates user', async () => {
     authStore.user = fakeUser
-    authStore.token = fakeToken
     vi.mocked(api.getMe).mockResolvedValueOnce(fakeUser)
 
     await authStore.fetchMe()
@@ -111,35 +140,13 @@ describe('auth store', () => {
     expect(authStore.user).toEqual(fakeUser)
   })
 
-  it('clears user+token on 401 from fetchMe', async () => {
+  it('clears the user on 401 from fetchMe', async () => {
     const error = new GlitchvyApiError(401, 'UNAUTHENTICATED', 'Unauthorized')
     authStore.user = fakeUser
-    authStore.token = fakeToken
-    localStorage.setItem('glitchvy_user', JSON.stringify(authStore.user))
-    localStorage.setItem('glitchvy_token', authStore.token)
     vi.mocked(api.getMe).mockRejectedValueOnce(error)
 
     await expect(authStore.fetchMe()).rejects.toThrow()
 
     expect(authStore.user).toBeNull()
-    expect(authStore.token).toBeNull()
-  })
-
-  it('does not fetch me if no token', async () => {
-    authStore.user = fakeUser
-    authStore.token = null
-    await authStore.fetchMe()
-    expect(api.getMe).not.toHaveBeenCalled()
-  })
-
-  it('restores session from localStorage on init', async () => {
-    setActivePinia(createPinia())
-    localStorage.setItem('glitchvy_user', JSON.stringify(fakeUser))
-    localStorage.setItem('glitchvy_token', fakeToken)
-    const { useAuthStore } = await import('@/stores/auth')
-    const fresh = useAuthStore()
-    expect(fresh.user).toEqual(fakeUser)
-    expect(fresh.token).toBe(fakeToken)
-    expect(fresh.isAuthenticated).toBe(true)
   })
 })

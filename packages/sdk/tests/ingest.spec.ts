@@ -3,7 +3,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { toIngestPayload } from '../src/core/ingest.js';
-import type { ReportEvent } from '../src/types.js';
+import type { ReportEvent, ErrorLevel } from '../src/types.js';
 
 function makeEvent(overrides: Partial<ReportEvent> = {}): ReportEvent {
   return {
@@ -21,6 +21,8 @@ function makeEvent(overrides: Partial<ReportEvent> = {}): ReportEvent {
     ...overrides,
   };
 }
+
+const BACKEND_LEVELS: ErrorLevel[] = ['debug', 'info', 'warning', 'error', 'critical'];
 
 describe('toIngestPayload', () => {
   it('flattens the nested SDK event into the documented ingest contract', () => {
@@ -112,5 +114,19 @@ describe('toIngestPayload', () => {
     const payload = toIngestPayload(makeEvent({ user: { userId: 'abc' } }));
     expect(payload.user_id).toBeUndefined();
     expect(payload.user_payload).toEqual({ userId: 'abc' });
+  });
+
+  describe('level mapping (S1)', () => {
+    it('maps each SDK level to a backend-accepted value', () => {
+      for (const level of BACKEND_LEVELS) {
+        const payload = toIngestPayload(makeEvent({ level }));
+        expect(BACKEND_LEVELS).toContain(payload.level);
+      }
+    });
+
+    it('maps warn alias to warning in the payload', () => {
+      const payload = toIngestPayload(makeEvent({ level: 'warn' }));
+      expect(payload.level).toBe('warning');
+    });
   });
 });

@@ -199,10 +199,21 @@ export async function getQueueStatus(): Promise<QueueStatus> {
 }
 
 /**
- * Tear down auto-capture, reset state, clear the callback. Mostly useful
- * for tests and HMR. Production apps should not need to call this.
+ * Tear down auto-capture, flush the offline queue, reset state, clear the callback.
+ * Mostly useful for tests and HMR. Production apps should not need to call this.
+ * Safe to call when the SDK was never initialized.
  */
-export function shutdown(): void {
+export async function shutdown(): Promise<void> {
+  const state = getState();
+  if (state.config) {
+    try {
+      await flushQueue(state.config);
+    } catch {
+      // A failing flush must not become an unhandled rejection for a
+      // consumer that calls `shutdown()` without awaiting it: the events
+      // stay in the queue and go out on the next boot.
+    }
+  }
   uninstallAutoCapture();
   clearReportCallback();
   resetState();

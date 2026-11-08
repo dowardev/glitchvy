@@ -79,6 +79,34 @@ class AdminErrorControllerTest extends \Tests\TestCase
         $response->assertJsonFragment(['id' => $errorReport->id]);
     }
 
+    public function test_index_honours_the_per_page_parameter(): void
+    {
+        $user = User::factory()->create();
+        Sanctum::actingAs($user);
+
+        $project = Project::factory()->create();
+        ErrorReport::factory()->count(10)->create(['project_id' => $project->id]);
+
+        $response = $this->getJson('/api/glitchvy/errors?per_page=3');
+
+        $response->assertStatus(200);
+        $this->assertCount(3, $response->json('data'));
+    }
+
+    public function test_index_accepts_limit_as_an_alias_of_per_page(): void
+    {
+        $user = User::factory()->create();
+        Sanctum::actingAs($user);
+
+        $project = Project::factory()->create();
+        ErrorReport::factory()->count(10)->create(['project_id' => $project->id]);
+
+        $response = $this->getJson('/api/glitchvy/errors?limit=4');
+
+        $response->assertStatus(200);
+        $this->assertCount(4, $response->json('data'));
+    }
+
     public function test_update_status_changes_status(): void
     {
         $user = User::factory()->create();

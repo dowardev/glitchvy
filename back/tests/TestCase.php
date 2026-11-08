@@ -17,6 +17,8 @@ use App\Http\Middleware\AuthenticateProjectApiKey;
 use App\Providers\GlitchvyServiceProvider;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Route;
+use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
+use App\Http\Middleware\ThrottleFirstPartyRequests;
 use Orchestra\Testbench\TestCase as OrchestraTestCase;
 
 abstract class TestCase extends OrchestraTestCase
@@ -36,23 +38,28 @@ abstract class TestCase extends OrchestraTestCase
             CreateApiKeyCommand::class,
         ]);
 
+        // Configure Sanctum stateful domains for tests
+        $this->app['config']->set('sanctum.stateful', ['localhost:8100', 'localhost', '127.0.0.1', '127.0.0.1:8100', '::1']);
+
         // Call defineRoutes manually
         $this->defineRoutes($this->app->make('router'));
     }
 
     protected function defineRoutes($router)
     {
+        // Mirrors routes/api.php: the stateful stack is per route, after
+        // the throttle that must run before a session is started.
         $router->prefix('api')->group(function () use ($router) {
             $router->post('glitchvy/errors', [IngestController::class, 'store'])
-                ->middleware('glitchvy.api')
+                ->middleware(['glitchvy.api', 'throttle:glitchvy-ingest'])
                 ->name('glitchvy.errors.store');
 
             $router->post('glitchvy/errors/{id}/screenshot', [IngestScreenshotController::class, 'store'])
-                ->middleware('glitchvy.api')
+                ->middleware(['glitchvy.api', 'throttle:glitchvy-ingest'])
                 ->whereNumber('id')
                 ->name('glitchvy.screenshot.upload');
 
-            $router->middleware('auth:sanctum')->prefix('glitchvy')->group(function () use ($router) {
+            $router->middleware([EnsureFrontendRequestsAreStateful::class, 'auth:sanctum'])->prefix('glitchvy')->group(function () use ($router) {
                 $router->get('errors', [AdminErrorController::class, 'index'])->name('glitchvy.errors.index');
                 $router->get('errors/{id}', [AdminErrorController::class, 'show'])->whereNumber('id')->name('glitchvy.errors.show');
                 $router->patch('errors/{id}/status', [AdminErrorController::class, 'updateStatus'])->whereNumber('id')->name('glitchvy.errors.status');
@@ -60,19 +67,39 @@ abstract class TestCase extends OrchestraTestCase
                 $router->get('errors/{id}/screenshot', [AdminScreenshotController::class, 'show'])->whereNumber('id')->name('glitchvy.screenshot.show');
             });
 
-            $router->middleware('auth:sanctum')->group(function () use ($router) {
+            $router->middleware([EnsureFrontendRequestsAreStateful::class, 'auth:sanctum'])->group(function () use ($router) {
                 $router->get('projects', [AdminProjectController::class, 'index'])->name('projects.index');
                 $router->post('projects', [AdminProjectController::class, 'store'])->name('projects.store');
                 $router->post('projects/{id}/api-keys', [AdminProjectController::class, 'createApiKey'])->whereNumber('id')->name('projects.api-keys.store');
             });
 
-            $router->post('auth/login', [AuthController::class, 'login'])->name('auth.login');
-            $router->post('auth/logout', [AuthController::class, 'logout'])->name('auth.logout');
-            $router->get('auth/me', [AuthController::class, 'me'])->middleware('auth:sanctum')->name('auth.me');
+            $router->post('auth/login', [AuthController::class, 'login'])
+                ->middleware([ThrottleFirstPartyRequests::class.':login_rate_limit,ip_email', EnsureFrontendRequestsAreStateful::class])
+                ->name('auth.login');
+            $router->post('auth/logout', [AuthController::class, 'logout'])
+                ->middleware([EnsureFrontendRequestsAreStateful::class, 'auth:sanctum'])
+                ->name('auth.logout');
+            $router->get('auth/me', [AuthController::class, 'me'])
+                ->middleware([EnsureFrontendRequestsAreStateful::class, 'auth:sanctum'])
+                ->name('auth.me');
+
+            // CSRF cookie endpoint for SPA
+            $router->get('glitchvy/csrf-cookie', function () {
+                return response()->noContent();
+            })->middleware([ThrottleFirstPartyRequests::class, EnsureFrontendRequestsAreStateful::class])
+                ->name('glitchvy.csrf-cookie');
         });
 
         // Register middleware alias
         $router->aliasMiddleware('glitchvy.api', AuthenticateProjectApiKey::class);
+    }
+
+    /**
+     * Find a cookie by name in a response.
+     */
+    protected function cookieNamed(\Illuminate\Testing\TestResponse $response, string $name): ?\Symfony\Component\HttpFoundation\Cookie
+    {
+        return collect($response->headers->getCookies())->first(fn ($cookie) => $cookie->getName() === $name);
     }
 
     protected function getPackageProviders($app)
@@ -92,7 +119,21 @@ abstract class TestCase extends OrchestraTestCase
             'prefix' => '',
         ]);
         $app['config']->set('app.key', 'base64:'.base64_encode(str_repeat('a', 32)));
+        // The test environment does not load the application config
+        // directory, so the configuration under test would otherwise be
+        // invisible here (and a broken file would not be noticed).
+        foreach (['cors', 'glitchvy', 'sanctum'] as $file) {
+            $path = dirname(__DIR__).'/config/'.$file.'.php';
+            $app['config']->set($file, require $path);
+        }
+
         $app['config']->set('sanctum.expiration', null);
+        // Mirrors config/sanctum.php: the test environment does not load
+        // the application config directory.
+        $app['config']->set(
+            'sanctum.middleware.validate_csrf_token',
+            \App\Http\Middleware\SkipCsrfForLogout::class
+        );
         $app['config']->set('auth.guards.sanctum', [
             'driver' => 'sanctum',
             'provider' => 'users',
