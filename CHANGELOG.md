@@ -7,15 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> Hardening of `v0.1.0` before it takes real traffic, tracked in [issue #6](https://gitlab.com/dowardev/glitchvy/-/issues/6).
+> Unreleased changes of `dowardev/glitchvy-server` (Laravel) and `glitchvy-admin` (Vue 3 + Ionic), tracked in [issue #6](https://gitlab.com/dowardev/glitchvy/-/issues/6).
 
 ### Fixed
-
-**`@dowardev/glitchvy`** (SDK)
-
-- The SDK `level` values did not match the backend enum. `reportError(err, ctx, 'warn')` was answered `422` and the event was lost, silently and forever (it was re-queued on every flush). The type now reaches the whole backend enum (`debug`, `info`, `warning`, `error`, `critical`), `warn` stays a public alias and is mapped to `warning` at the transport boundary.
-- `shutdown()` did not flush, although the README said it did. It is now async and drains the offline queue before resetting the state.
-- `initErrorReporter()` in a runtime without a `window` permanently disabled auto-capture for that module instance. The hooks are now only marked as installed after the window check.
 
 **`dowardev/glitchvy-server`** (Laravel)
 
@@ -30,6 +24,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The admin token was kept in `localStorage`, where any XSS could read it, and it outlived the browser session. The session now lives in an httpOnly cookie that the SPA never touches.
 - The page size was sent as `limit`, which the API ignored: the error list was always 20 rows. The API reads `per_page` now.
 - The SPA shipped without a Content-Security-Policy. Production builds now carry a strict one (`script-src 'self'`, no inline script, `frame-ancestors 'none'`).
+
+## [0.2.0] - 2026-11-08
+
+> Release of `@dowardev/glitchvy` 0.2.0 (the SDK), with the hardening of `v0.1.0`, tracked in [issue #6](https://gitlab.com/dowardev/glitchvy/-/issues/6). The server and the admin SPA keep their own versions and changelogs.
+
+### Changed (breaking)
+
+**`@dowardev/glitchvy`** (SDK)
+
+- `shutdown()` is now async: it returns a `Promise<void>` instead of `void`. It drains the offline queue before it resets the state, so the events that were waiting are sent instead of being lost, and it never rejects (a failed flush keeps the events in IndexedDB for the next boot). Callers that used the synchronous return value must `await` it: `glitchvy.shutdown()` without `await` can end the process before the queue is flushed.
+
+### Fixed
+
+**`@dowardev/glitchvy`** (SDK)
+
+- The SDK `level` values did not match the backend enum. `reportError(err, ctx, 'warn')` was answered `422` and the event was lost, silently and forever (it was re-queued on every flush). The type now reaches the whole backend enum (`debug`, `info`, `warning`, `error`, `critical`), `warn` stays a public alias and is mapped to `warning` at the transport boundary.
+- `shutdown()` did not flush, although the README said it did. See the breaking change above.
+- `initErrorReporter()` in a runtime without a `window` permanently disabled auto-capture for that module instance. The hooks are now only marked as installed after the window check.
 
 ## [0.1.0] - 2026-10-27
 
