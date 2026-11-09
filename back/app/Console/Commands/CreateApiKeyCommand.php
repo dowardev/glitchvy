@@ -4,6 +4,7 @@
 
 namespace App\Console\Commands;
 
+use App\Console\Commands\Concerns\ResolvesProjectOwner;
 use App\Models\ApiKey;
 use App\Models\Project;
 use Illuminate\Console\Command;
@@ -12,19 +13,21 @@ use Illuminate\Support\Str;
 
 class CreateApiKeyCommand extends Command
 {
+    use ResolvesProjectOwner;
+
     /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'glitchvy:create-api-key {--project=} {--name=}';
+    protected $signature = 'glitchvy:create-api-key {--project=} {--name=} {--user=}';
 
     /**
      * The console command description.
      *
      * @var string
      */
-    protected $description = 'Create a new API key for a project';
+    protected $description = 'Create a new API key for a project (--project, --user defaults to the first admin)';
 
     /**
      * Execute the console command.
@@ -34,21 +37,34 @@ class CreateApiKeyCommand extends Command
         $projectIdentifier = $this->option('project');
         $name = $this->option('name');
 
-        if (! $projectIdentifier) {
-            $projects = Project::pluck('slug', 'id')->toArray();
+        $owner = $this->resolveOwner();
 
-            if (empty($projects)) {
+        if ($owner === false) {
+            return Command::FAILURE;
+        }
+
+        // The projects the operator can manage are the ones they own
+        // (plus the ones nobody owns). With no admin at all, nothing is
+        // scoped: the CLI reaches the whole database.
+        $projects = $owner === null
+            ? Project::query()
+            : Project::visibleTo($owner);
+
+        if (! $projectIdentifier) {
+            $choices = $projects->pluck('slug', 'id')->toArray();
+
+            if (empty($choices)) {
                 $this->error('No projects found. Create one first with glitchvy:create-project.');
 
                 return Command::FAILURE;
             }
 
-            $projectIdentifier = $this->choice('Select a project', $projects);
+            $projectIdentifier = $this->choice('Select a project', $choices);
         }
 
         $project = is_numeric($projectIdentifier)
-            ? Project::find($projectIdentifier)
-            : Project::where('slug', $projectIdentifier)->first();
+            ? $projects->find($projectIdentifier)
+            : $projects->where('slug', $projectIdentifier)->first();
 
         if (! $project) {
             $this->error("Project not found: {$projectIdentifier}");

@@ -70,6 +70,7 @@ abstract class TestCase extends OrchestraTestCase
             $router->middleware([EnsureFrontendRequestsAreStateful::class, 'auth:sanctum'])->group(function () use ($router) {
                 $router->get('projects', [AdminProjectController::class, 'index'])->name('projects.index');
                 $router->post('projects', [AdminProjectController::class, 'store'])->name('projects.store');
+                $router->get('projects/{id}/api-keys', [AdminProjectController::class, 'apiKeys'])->whereNumber('id')->name('projects.api-keys.index');
                 $router->post('projects/{id}/api-keys', [AdminProjectController::class, 'createApiKey'])->whereNumber('id')->name('projects.api-keys.store');
             });
 

@@ -22,6 +22,9 @@ class AdminProjectController extends Controller
     /**
      * Display a listing of projects.
      *
+     * The list is scoped by the authenticated admin: it only holds the
+     * projects that admin owns (and the ones nobody owns).
+     *
      * The admin SPA is small (tens of projects max), so we return a plain
      * array sorted by most-recent-first instead of a paginator. This keeps
      * the front simple: typescript type is Project[] and v-for in the list
@@ -32,6 +35,7 @@ class AdminProjectController extends Controller
     public function index(Request $request)
     {
         $projects = Project::withCount('apiKeys')
+            ->visibleTo($request->user())
             ->latest()
             ->get();
 
@@ -40,6 +44,9 @@ class AdminProjectController extends Controller
 
     /**
      * Store a newly created project.
+     *
+     * The authenticated admin becomes the owner of the project, so the
+     * listing of the other admins never shows it.
      */
     public function store(Request $request)
     {
@@ -90,6 +97,7 @@ class AdminProjectController extends Controller
                     $project = Project::create([
                         'name' => $validated['name'],
                         'slug' => $slug,
+                        'user_id' => $request->user()->id,
                     ]);
 
                     return response()->json($project, 201);
@@ -119,10 +127,13 @@ class AdminProjectController extends Controller
      * The plaintext key is never returned here — it is shown exactly
      * once, in the createApiKey response. Only the prefix, the name and
      * the last-used timestamp are exposed.
+     *
+     * A project the authenticated admin does not own is a 404: the
+     * caller must not learn that it exists.
      */
     public function apiKeys(Request $request, int $id)
     {
-        $project = Project::findOrFail($id);
+        $project = Project::visibleTo($request->user())->findOrFail($id);
 
         $keys = $project->apiKeys()
             ->latest()
@@ -141,10 +152,13 @@ class AdminProjectController extends Controller
 
     /**
      * Create a new API key for a project.
+     *
+     * A project the authenticated admin does not own is a 404: the
+     * caller must not learn that it exists.
      */
     public function createApiKey(Request $request, int $id)
     {
-        $project = Project::findOrFail($id);
+        $project = Project::visibleTo($request->user())->findOrFail($id);
 
         $validated = $request->validate([
             'name' => 'required|string|max:255',

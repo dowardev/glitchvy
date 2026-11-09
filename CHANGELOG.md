@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > Unreleased changes of `dowardev/glitchvy-server` (Laravel) and `glitchvy-admin` (Vue 3 + Ionic), tracked in [issue #6](https://gitlab.com/dowardev/glitchvy/-/issues/6).
 
+### Added
+
+**`dowardev/glitchvy-server`** (Laravel)
+
+- Project ownership, tracked in [issue #2](https://gitlab.com/dowardev/glitchvy/-/issues/2): a project belongs to an admin, and the admin project endpoints (`GET`/`POST /api/projects`, `GET`/`POST /api/projects/{id}/api-keys`) are scoped by the authenticated admin. A project of another admin answers `404`, so the caller cannot learn that it exists. The projects that already existed are assigned to the operator (the first admin) by the migration, so none of them is left unreachable. The admin SPA reads the same scoped endpoints, so its project list and API key listing are scoped by the same relation.
+
 ### Fixed
 
 **`dowardev/glitchvy-server`** (Laravel)

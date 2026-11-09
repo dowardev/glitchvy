@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Project ownership: the `projects` table has a `user_id` column and every admin project endpoint is scoped by the authenticated admin (`GET`/`POST /api/projects`, `GET`/`POST /api/projects/{id}/api-keys`). A project of another admin answers `404`. The projects that already existed are assigned to the operator (the first admin) by the migration.
 - Initial release of the standalone Laravel 13 multi-tenant error-reporting server.
 - Multi-tenant schema: `projects`, `api_keys`, `users`, `error_reports` (scoped by `project_id`), `error_screenshots`.
 - Ingestion endpoint `POST /api/glitchvy/errors`, authenticated with a per-project API key sent as a Bearer token. The key is stored hashed; only its prefix is kept in clear for lookup.
@@ -32,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `glitchvy:create-project` and `glitchvy:create-api-key` accept `--user=<email>` and default to the first admin (the operator). A project created from the CLI belongs to that admin, and the API key command only reaches the projects of the admin it acts for.
 - The error status workflow is `open` → `in_progress` → `resolved`, with `ignored` for reports that will not be fixed. The pre-SPA values `triaged` and `closed` are gone from the schema, the model and the API.
 - `error_reports.event_id` is now `NOT NULL`. A unique index does not constrain NULLs, so an event without an id would have defeated the dedup guarantee. The ingestion endpoint mints a UUID when the payload carries none.
 - `glitchvy:prune` defaults to the configured retention days (`GLITCHVY_RETENTION_DAYS`, default 30) instead of a hardcoded 30. `--days` still overrides it. It now prunes the live reports older than the retention as well: nothing soft deletes an error report, so a prune that only looked at the trashed rows would never delete anything.
