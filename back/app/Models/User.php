@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 
@@ -17,6 +18,26 @@ class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
     use HasApiTokens, HasFactory, Notifiable;
+
+    /**
+     * Get the projects owned by the admin.
+     */
+    public function projects(): HasMany
+    {
+        return $this->hasMany(Project::class);
+    }
+
+    /**
+     * The admin that owns the projects nobody assigned.
+     *
+     * The service is a single-operator one: the operator is the first
+     * admin, the same one the migration that adds the ownership column
+     * assigns the projects that already exist to.
+     */
+    public static function operator(): ?self
+    {
+        return static::query()->orderBy('id')->first();
+    }
 
     /**
      * Get the attributes that should be cast.

@@ -135,8 +135,9 @@ sends a first-party origin can revoke its token instead of getting a `419`.
 | `GET` | `/api/glitchvy/errors/{id}` | Show error with screenshots |
 | `PATCH` | `/api/glitchvy/errors/{id}/status` | Update status (open/in_progress/resolved/ignored) |
 | `GET` | `/api/glitchvy/errors/{id}/screenshot` | Download screenshot |
-| `GET` | `/api/projects` | List projects |
-| `POST` | `/api/projects` | Create project |
+| `GET` | `/api/projects` | List the projects of the authenticated admin |
+| `POST` | `/api/projects` | Create project (owned by the authenticated admin) |
+| `GET` | `/api/projects/{id}/api-keys` | List the API keys of a project |
 | `POST` | `/api/projects/{id}/api-keys` | Create API key for project |
 | `POST` | `/api/auth/login` | Login (session for a browser, token for an API client) |
 | `POST` | `/api/auth/logout` | End the session or revoke the current token |
@@ -145,6 +146,13 @@ sends a first-party origin can revoke its token instead of getting a `419`.
 `POST /api/auth/login` is rate limited per IP and email
 (`GLITCHVY_LOGIN_RATE_LIMIT`): past the budget it answers `429`.
 
+**Project ownership:** every project belongs to an admin. The project endpoints
+are scoped by the authenticated admin: the listing holds only the projects that
+admin owns (plus the ones nobody owns), and a project of another admin is a
+`404`, not a `403`, so the caller cannot learn that it exists. The projects that
+existed before the ownership column was added are assigned to the operator (the
+first admin) by the migration, so none of them is left unreachable.
+
 **Query parameters for `/api/glitchvy/errors`:**
 - `environment`, `status`, `level`, `project_id`, `search`, `per_page` (`limit`
   is accepted as an alias)
@@ -152,11 +160,13 @@ sends a first-party origin can revoke its token instead of getting a `419`.
 ## CLI Commands
 
 ```bash
-# Create a project
+# Create a project (owned by the first admin; --user=<email> picks another)
 php artisan glitchvy:create-project --name="My App" --slug=my-app
+php artisan glitchvy:create-project --name="My App" --slug=my-app --user=me@example.com
 
-# Create an API key
+# Create an API key (for a project of the operator; --user=<email> picks another admin)
 php artisan glitchvy:create-api-key --project=my-app --name="Production Key"
+php artisan glitchvy:create-api-key --project=my-app --name="Production Key" --user=me@example.com
 
 # Prune old soft-deleted errors (dry run)
 php artisan glitchvy:prune --days=30 --dry-run
