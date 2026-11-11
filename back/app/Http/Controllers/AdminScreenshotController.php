@@ -14,10 +14,13 @@ class AdminScreenshotController extends Controller
 {
     /**
      * Display the screenshot for an error report.
+     *
+     * An error report of a project the authenticated admin does not own
+     * is a 404: the caller must not learn that it exists.
      */
     public function show(Request $request, int $id)
     {
-        $errorReport = ErrorReport::findOrFail($id);
+        $errorReport = ErrorReport::visibleTo($request->user())->findOrFail($id);
 
         $screenshot = ErrorScreenshot::where('error_report_id', $errorReport->id)
             ->latest()
