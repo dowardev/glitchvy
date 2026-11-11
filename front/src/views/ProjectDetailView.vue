@@ -58,13 +58,19 @@
 
         <ErrorListView :projectId="project.id" />
       </template>
-
-      <ApiKeyCreateModal
-        ref="apiKeyModalRef"
-        :projectId="project?.id"
-        @created="onApiKeyCreated"
-      />
     </ion-content>
+
+    <!--
+      The modal lives outside the <ion-content>: opening it makes Ionic
+      move the <ion-modal> into the <ion-app> overlay container, and the
+      API key list that appears below it would then be inserted before an
+      element that is no longer a child of the <ion-content>.
+    -->
+    <ApiKeyCreateModal
+      ref="apiKeyModalRef"
+      :projectId="project?.id"
+      @created="onApiKeyCreated"
+    />
   </ion-page>
 </template>
 
@@ -86,6 +92,7 @@ import {
   IonList,
   IonPage,
   IonSpinner,
+  IonText,
   IonTitle,
   IonToolbar,
 } from '@ionic/vue';

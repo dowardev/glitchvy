@@ -120,6 +120,33 @@ Two ways to authenticate:
 - **API client.** A login from anywhere else returns a bearer token:
   `Authorization: Bearer <sanctum_token>`.
 
+**Which origins open a session.** The stateful domains are the loopback
+interface plus whatever `SANCTUM_STATEFUL_DOMAINS` declares. The loopback
+entries carry a port wildcard on purpose: the admin SPA runs on a port of its
+own (Ionic picks a free one, and it changes between runs), and a domain
+without a port does not match the bare host — `localhost` alone would leave the
+SPA unauthenticated on every port but the default one.
+
+The wildcard is a `Str::is` pattern, not a Sanctum feature: Sanctum matches the
+browser origin against `"<entry>/*"` and `Str::is` understands the glob, so
+`localhost:*` covers every port of that host. A deployment adds its own domain
+to `SANCTUM_STATEFUL_DOMAINS`, which **adds** to the loopback list instead of
+replacing it: the loopback stays stateful in every environment.
+
+Two consequences worth knowing:
+
+- Any process on the machine can reach the API with a first-party origin. It
+  still needs the httpOnly session cookie and the XSRF token, so it cannot
+  open a session on its own.
+- The IPv6 loopback is listed in its bracketed form (`[::1]`), the one a browser
+  sends in an origin.
+
+The difference is visible in the login response: a stateful origin gets a
+session cookie and `token: null`, anything else gets a bearer token. The SPA
+only speaks the cookie session, so a login from an origin the API does not
+know leaves it authenticated in the UI and answering `Unauthenticated` on its
+first data request.
+
 Opening a session revokes the admin tokens that carry the default device name
 (`api-token`), which is what the previous SPA flow issued: those tokens never
 expired on their own, so they would have kept working after the session ended.

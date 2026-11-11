@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The admin SPA could not open a session from a loopback port other than the default ones, and answered `Unauthenticated` on its first data request. The stateful domains now cover the loopback interface on any port (the SPA runs on a port of its own, and it changes between runs), and `SANCTUM_STATEFUL_DOMAINS` adds the deployment domains to that list instead of replacing it. The port wildcard is a `Str::is` pattern (Sanctum matches the origin against `"<entry>/*"`), not a Sanctum feature.
+
 ### Added
 
 - Project ownership: the `projects` table has a `user_id` column and every admin project endpoint is scoped by the authenticated admin (`GET`/`POST /api/projects`, `GET`/`POST /api/projects/{id}/api-keys`). A project of another admin answers `404`. The projects that already existed are assigned to the operator (the first admin) by the migration.

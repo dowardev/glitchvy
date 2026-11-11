@@ -62,6 +62,14 @@ and the XSRF token in a readable cookie, both of which the browser only
 exposes to the domain that set them. Serve the SPA from the same host as the
 API (or from a sibling subdomain) and proxy `/api` to it.
 
+The API treats the loopback interface as a first-party origin on **any**
+port, so the dev server can run on whatever port Ionic picks (8100 by default,
+a free one otherwise). A login from an origin the API does not know returns a
+bearer token instead of a session, and the SPA — which only speaks the cookie
+session — answers `Unauthenticated` on its first data request. If the SPA is
+served from another host, add that host to `SANCTUM_STATEFUL_DOMAINS` in the
+backend.
+
 ### Building
 
 ```bash
