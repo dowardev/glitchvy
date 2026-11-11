@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **`dowardev/glitchvy-server`** (Laravel)
 
+- The admin SPA could not open a session from a loopback port other than the default ones: the login answered a bearer token the SPA does not use, and the first data request answered `Unauthenticated`. The stateful domains now cover the loopback interface on any port (the SPA runs on a port of its own, and it changes between runs), and `SANCTUM_STATEFUL_DOMAINS` adds the deployment domains to that list instead of replacing it. The port wildcard is a `Str::is` pattern (Sanctum matches the origin against `"<entry>/*"`), not a Sanctum feature.
+
 - The ingestion endpoint had no rate limit. The per-project API key ships in the browser bundle of every consumer app, so anyone who extracted it could flood the database. The limit is per project and comes from `GLITCHVY_RATE_LIMIT` (`60,1` by default).
 - The admin login had no throttle, so the credentials could be brute-forced. The limit is per IP and email and comes from `GLITCHVY_LOGIN_RATE_LIMIT` (`5,1` by default).
 - The documented environment variables (`GLITCHVY_RETENTION_DAYS`, `GLITCHVY_STORAGE_DISK`, `GLITCHVY_RATE_LIMIT`) were read by no code, and the one that existed (`GLITCHVY_SCREENSHOT_DISK`) was undocumented. They now live in `config/glitchvy.php` and are listed in `.env.example`.
@@ -30,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The admin token was kept in `localStorage`, where any XSS could read it, and it outlived the browser session. The session now lives in an httpOnly cookie that the SPA never touches.
 - The page size was sent as `limit`, which the API ignored: the error list was always 20 rows. The API reads `per_page` now.
 - The SPA shipped without a Content-Security-Policy. Production builds now carry a strict one (`script-src 'self'`, no inline script, `frame-ancestors 'none'`).
+- Creating a project from the admin SPA died with *"Failed to execute 'insertBefore' on 'Node'"* and left the page broken. Opening a modal makes Ionic move the `<ion-modal>` out of the `<ion-content>` into the `<ion-app>` overlay container, so the element Vue had to insert the new list before was no longer a child of the content. The project list keeps a single stable `<ion-list>` with the state inside it, and the modals live outside the `<ion-content>`. The project detail view also rendered an unresolved `<ion-text>` component, and the error list asked for two icons by name instead of importing them, so neither icon was drawn.
 
 ## [0.2.0] - 2026-11-08
 

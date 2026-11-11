@@ -18,7 +18,7 @@
       </div>
 
       <div v-else-if="errorsStore.error" class="ion-text-center ion-padding">
-        <ion-icon name="alert-circle-outline" size="large" color="danger" />
+        <ion-icon :icon="alertCircleOutline" size="large" color="danger" />
         <p>{{ errorsStore.error }}</p>
         <ion-button fill="outline" @click="loadPage">
           Reintentar
@@ -28,7 +28,7 @@
       <ion-list v-else-if="errorsStore.list.length === 0" lines="none">
         <ion-item>
           <ion-label class="ion-text-center">
-            <ion-icon name="bug-outline" size="large" color="medium" />
+            <ion-icon :icon="bugOutline" size="large" color="medium" />
             <h2>No hay errores</h2>
             <p>{{ filters.project_id ? 'Para este proyecto' : 'En todos los proyectos' }}</p>
           </ion-label>
@@ -81,7 +81,7 @@ import {
   IonToolbar,
 } from '@ionic/vue';
 import { onMounted, watch, ref } from 'vue';
-import { chevronBackOutline, chevronForwardOutline } from 'ionicons/icons';
+import { alertCircleOutline, bugOutline, chevronBackOutline, chevronForwardOutline } from 'ionicons/icons';
 import { useErrorsStore } from '@/stores/errors';
 import ErrorListItem from '@/components/ErrorListItem.vue';
 import ErrorFilters from '@/components/ErrorFilters.vue';

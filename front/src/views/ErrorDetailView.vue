@@ -24,7 +24,7 @@
       </div>
 
       <div v-else-if="errorsStore.error && !detail" class="ion-text-center ion-padding">
-        <ion-icon name="alert-circle-outline" size="large" color="danger" />
+        <ion-icon :icon="alertCircleOutline" size="large" color="danger" />
         <p>{{ errorsStore.error }}</p>
         <ion-button fill="outline" @click="loadDetail">Reintentar</ion-button>
       </div>
@@ -179,7 +179,7 @@ import {
   IonToolbar,
 } from '@ionic/vue';
 import { onMounted, watch, ref, computed } from 'vue';
-import { refreshOutline } from 'ionicons/icons';
+import { alertCircleOutline, refreshOutline } from 'ionicons/icons';
 import { useErrorsStore } from '@/stores/errors';
 import ScreenshotViewer from '@/components/ScreenshotViewer.vue';
 

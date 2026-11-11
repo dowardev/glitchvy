@@ -5,6 +5,7 @@
 namespace Tests\Feature;
 
 use App\Models\User;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Hash;
 use Tests\Support\StrictValidateCsrfToken;
@@ -78,6 +79,70 @@ class AdminSessionAuthTest extends \Tests\TestCase
 
         $meResponse->assertStatus(200);
         $this->assertSame($user->email, $meResponse->json('email'));
+    }
+
+    /**
+     * The admin SPA runs on a port of its own (Ionic picks a free one),
+     * so the stateful domains have to cover every loopback port and not
+     * only the default ones. Without that, the login answers a bearer
+     * token the SPA cannot use and the next request is unauthenticated.
+     */
+    public function test_the_spa_login_from_any_loopback_port_creates_a_session(): void
+    {
+        $user = $this->createUser();
+
+        foreach (['http://localhost:8105/', 'http://127.0.0.1:5174/', 'http://[::1]:8005/'] as $origin) {
+            $response = $this->postLogin($user->email, 'password123', [
+                'Referer' => $origin,
+            ]);
+
+            $response->assertStatus(200);
+            $this->assertNull($response->json('token'), "SPA login from {$origin} should return null token");
+            $this->assertAuthenticated('web');
+            $this->app['auth']->forgetGuards();
+
+            Auth::guard('web')->logout();
+        }
+    }
+
+    /**
+     * The bare loopback hosts, without a port, stay stateful too: the
+     * wildcard entries cover the ports, the plain ones cover the host.
+     */
+    public function test_the_spa_login_from_a_bare_loopback_host_creates_a_session(): void
+    {
+        $user = $this->createUser();
+
+        foreach (['http://localhost/', 'http://127.0.0.1/', 'http://[::1]/'] as $origin) {
+            $response = $this->postLogin($user->email, 'password123', [
+                'Referer' => $origin,
+            ]);
+
+            $response->assertStatus(200);
+            $this->assertNull($response->json('token'), "SPA login from {$origin} should return null token");
+            $this->assertAuthenticated('web');
+            $this->app['auth']->forgetGuards();
+
+            Auth::guard('web')->logout();
+        }
+    }
+
+    /**
+     * The stateful domains stay limited to the loopback interface: a
+     * request from anywhere else is an API client, and it gets a bearer
+     * token instead of a session.
+     */
+    public function test_a_login_from_a_foreign_origin_gets_a_token_instead_of_a_session(): void
+    {
+        $user = $this->createUser();
+
+        $response = $this->postLogin($user->email, 'password123', [
+            'Referer' => 'https://errors.example.com/admin',
+        ]);
+
+        $response->assertStatus(200);
+        $this->assertIsString($response->json('token'));
+        $this->assertGuest('web');
     }
 
     public function test_api_client_login_returns_bearer_token(): void

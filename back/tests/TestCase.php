@@ -38,8 +38,10 @@ abstract class TestCase extends OrchestraTestCase
             CreateApiKeyCommand::class,
         ]);
 
-        // Configure Sanctum stateful domains for tests
-        $this->app['config']->set('sanctum.stateful', ['localhost:8100', 'localhost', '127.0.0.1', '127.0.0.1:8100', '::1']);
+        // The stateful domains are not pinned here: they come from the
+        // application config (config/sanctum.php), so the suite exercises
+        // the real list. A test that needs a specific origin sets it
+        // explicitly.
 
         // Call defineRoutes manually
         $this->defineRoutes($this->app->make('router'));

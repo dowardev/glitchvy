@@ -5,6 +5,29 @@ use Illuminate\Cookie\Middleware\EncryptCookies;
 use Laravel\Sanctum\Http\Middleware\AuthenticateSession;
 use Laravel\Sanctum\Sanctum;
 
+// The domains that open a session instead of answering a bearer token.
+//
+// The loopback interface is always stateful, on any port: the admin SPA
+// runs on a port of its own (Ionic picks a free one, and it changes
+// between runs), and every one of those ports has to reach the API with
+// a session cookie.
+//
+// The port wildcard is a Str::is pattern, not a Sanctum feature:
+// Sanctum matches the browser origin against "<entry>/*" and Str::is
+// understands the glob. A domain without a port only matches the bare
+// host, so "localhost" alone would leave the SPA unauthenticated on
+// http://localhost:8105 and on every port but the default one.
+//
+// The IPv6 loopback is listed in its bracketed form only: that is the
+// one a browser sends in an origin.
+//
+// SANCTUM_STATEFUL_DOMAINS adds the deployment domains to this list.
+$statefulDomains = array_merge(
+    ['localhost', 'localhost:*', '127.0.0.1', '127.0.0.1:*', '[::1]', '[::1]:*'],
+    array_filter(array_map('trim', explode(',', (string) env('SANCTUM_STATEFUL_DOMAINS', '')))),
+    [Sanctum::currentApplicationUrlWithPort()],
+);
+
 return [
 
     /*
@@ -16,16 +39,11 @@ return [
     | authentication cookies. Typically, these should include your local
     | and production domains which access your API via a frontend SPA.
     |
+    | See $statefulDomains above for how the list is built.
+    |
     */
 
-    'stateful' => explode(',', env('SANCTUM_STATEFUL_DOMAINS', implode(',', [
-        'localhost',
-        'localhost:8100',
-        '127.0.0.1',
-        '127.0.0.1:8100',
-        '::1',
-        Sanctum::currentApplicationUrlWithPort(),
-    ]))),
+    'stateful' => array_values(array_unique(array_filter($statefulDomains))),
 
     /*
     |--------------------------------------------------------------------------

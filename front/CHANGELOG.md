@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Creating a project from the admin SPA died with *"Failed to execute 'insertBefore' on 'Node': The node before which the new node is to be inserted is not a child of this node"*, and the page was left broken. Opening a modal makes Ionic move the `<ion-modal>` out of the `<ion-content>` and into the `<ion-app>` overlay container, so the element Vue had to insert the new list before was no longer a child of the content: the project list now keeps a single stable `<ion-list>` with the state inside it, and the modals live outside the `<ion-content>`.
+- The project detail view rendered an unresolved `<ion-text>` component (it was used but never imported), and the error list and the error detail asked for the `bug-outline` and `alert-circle-outline` icons by name, so those icons were not drawn.
+
 - The SPA could not navigate or read route parameters. `useRouter()` and `useRoute()` resolve to `undefined` inside a view rendered by the Ionic router outlet, because vue-router 5 resolves its injections from the `RouterView` component and the outlet renders the view outside that scope. A successful login left the page on `/login` with *"Cannot read properties of undefined (reading 'push')"*, and the error detail view threw *"Cannot read properties of undefined (reading 'params')"*. Navigation now goes through `useIonRouter()` and the route parameters arrive as props.
 - The Sanctum token is now persisted alongside the user and sent with every authenticated request. It was discarded at login, so every call after it went out unauthenticated.
 - The project list is a plain array again. The endpoint returned a cursor paginator, so the list rendered empty and creating a project failed inside the modal.
