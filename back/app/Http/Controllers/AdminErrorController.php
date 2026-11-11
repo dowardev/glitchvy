@@ -12,10 +12,14 @@ class AdminErrorController extends Controller
 {
     /**
      * Display a listing of error reports.
+     *
+     * The list only holds the error reports of the projects the
+     * authenticated admin owns (and of the ones nobody owns).
      */
     public function index(Request $request)
     {
         $query = ErrorReport::with('project')
+            ->visibleTo($request->user())
             ->when($request->filled('environment'), function ($q) use ($request) {
                 $q->where('environment', $request->string('environment'));
             })
@@ -51,10 +55,14 @@ class AdminErrorController extends Controller
 
     /**
      * Display the specified error report.
+     *
+     * An error report of a project the authenticated admin does not own
+     * is a 404: the caller must not learn that it exists.
      */
     public function show(Request $request, int $id)
     {
         $errorReport = ErrorReport::with(['project', 'screenshots'])
+            ->visibleTo($request->user())
             ->findOrFail($id);
 
         return response()->json(new ErrorReportResource($errorReport));
@@ -62,10 +70,13 @@ class AdminErrorController extends Controller
 
     /**
      * Update the status of the specified error report.
+     *
+     * An error report of a project the authenticated admin does not own
+     * is a 404: the caller must not learn that it exists.
      */
     public function updateStatus(Request $request, int $id)
     {
-        $errorReport = ErrorReport::findOrFail($id);
+        $errorReport = ErrorReport::visibleTo($request->user())->findOrFail($id);
 
         $validated = $request->validate([
             'status' => 'required|in:open,in_progress,resolved,ignored',

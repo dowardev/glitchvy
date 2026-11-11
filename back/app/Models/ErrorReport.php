@@ -7,6 +7,7 @@ namespace App\Models;
 use App\Events\ErrorReported;
 use Database\Factories\ErrorReportFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -69,6 +70,21 @@ class ErrorReport extends Model
     protected $dispatchesEvents = [
         'created' => ErrorReported::class,
     ];
+
+    /**
+     * Scope the query to the error reports the given admin is allowed to see.
+     *
+     * A report belongs to a project, and a project belongs to an admin.
+     * The visibility of the reports is therefore the visibility of their
+     * projects: the same relation the admin project endpoints use.
+     */
+    public function scopeVisibleTo(Builder $query, ?User $user): Builder
+    {
+        return $query->whereHas(
+            'project',
+            fn (Builder $sub) => $sub->visibleTo($user)
+        );
+    }
 
     /**
      * Get the project that owns the error report.

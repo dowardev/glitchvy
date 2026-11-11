@@ -180,6 +180,13 @@ admin owns (plus the ones nobody owns), and a project of another admin is a
 existed before the ownership column was added are assigned to the operator (the
 first admin) by the migration, so none of them is left unreachable.
 
+**Error report ownership:** the error report endpoints are scoped by the same
+relation: a report belongs to a project, and a project belongs to an admin. The
+listing holds only the reports of the projects the authenticated admin owns
+(plus the ones nobody owns), and a report of a project of another admin is a
+`404`, not a `403`, on the detail, the status update and the screenshot
+download.
+
 **Query parameters for `/api/glitchvy/errors`:**
 - `environment`, `status`, `level`, `project_id`, `search`, `per_page` (`limit`
   is accepted as an alias)
