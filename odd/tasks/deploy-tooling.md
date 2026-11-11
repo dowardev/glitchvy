@@ -1,0 +1,39 @@
+# Deploy tooling (setup.sh + scripts/deploy + CI deploy/rollback)
+
+Bring the deployment tooling that the sibling repos (`sso`, `oneSpend`, `lifeline`, `portafolio`) already have into `glitchvy`: a first-run `setup.sh` for the server, a local `scripts/deploy/deploy.sh` that builds and ships `back/` + `front/` over SSH, GitLab CI `deploy`/`rollback` stages, and the `DEPLOY.md` documentation.
+
+## Specs
+
+- **S1** — The user request (verbatim): "e el resto de proyectos(doeumentos/programacion) exissten dos scrips(deploy,setup) me gustaria implmentarlos tambien aqui" — so: implement `deploy` and `setup` scripts in `glitchvy` too.
+- **S2** — User decision (hosting): "Mismo hosting de sso/oneSpend (SSH)" — the deploy targets the existing shared-hosting server reachable over SSH (`SSH_HOST`/`SSH_PORT`/`SSH_USER` in `scripts/deploy/.env`).
+- **S3** — User decision (scope): "setup.sh + scripts/deploy/ + DEPLOY.md + CI deploy stage" — all four deliverables in one batch.
+- **S4** — User decision (SDK): "No, publish aparte" — the npm SDK (`packages/sdk`) is NOT published by this tooling; the deploy covers only `back/` + `front/`.
+- **S5** — `setup.sh` (repo root) configures the server: prerequisites check, `back/.env` from `back/.env.example` (APP_URL, APP_KEY, DB, session/cache/queue, Sanctum stateful domains, CORS, `GLITCHVY_*`), optional `front/.env.production` (Vite bakes these at build time), `composer install`, `php artisan migrate --force`, storage link, cache/route caching, health checks, and a summary. It supports `--dev`, `--non-interactive`, `--no-backup`, `--skip-front-build`, `--help`, and exits with distinct codes (2 missing prerequisite, 3 missing env var, 4 no TTY, 5 migration/seed failure, 6 write permission).
+- **S6** — `scripts/deploy/deploy.sh` supports `--backend`, `--frontend`, `--all`, `--tag`, `--skip-checks`, `--dry-run`, `--verbose`, `--help`; runs pre-deploy checks (backend pint + phpunit, SDK tsc + vitest, admin SPA vitest + typecheck), builds a backend tarball and a `front/dist` tarball, uploads both with `scp`, and runs the remote deploy commands from `scripts/deploy/deploy.conf` (`composer install`, `artisan migrate --force`, `config:cache`, `route:cache`).
+- **S7** — `scripts/deploy/deploy.conf` (committed) plus `scripts/deploy/deploy.conf.example` hold the project config (`PROJECT_TYPE=fullstack`, dirs, build commands, artifact excludes, remote commands); `scripts/deploy/.env` (gitignored) plus `scripts/deploy/.env.example` hold the secrets/host values.
+- **S8** — `setup.sh` is uploaded by `deploy.sh` to the server app root and made executable, but NEVER executed automatically; the `.env.*.example` templates it needs are uploaded too.
+- **S9** — `.gitlab-ci.yml` gains `deploy` and `rollback` stages that run only on semver tags: `backend_deploy` (tar `back/`, scp, remote install+migrate+cache), `frontend_deploy` (tar `front/dist`, scp, extract) and manual `rollback_backend` / `rollback_frontend` jobs that redeploy the previous tag.
+- **S10** — `DEPLOY.md` documents the whole flow: prerequisites, first-run setup on the server, local deploy, CI deploy, rollback, and the env/config reference.
+- **S11** — No `.env` file with real secrets is ever committed: `scripts/deploy/.env`, `front/.env.local`, `front/.env.production` and `back/.env` stay gitignored; only `*.example` templates are tracked.
+
+## Tasks
+
+- **T1** (S5) — `setup.sh` at the repo root, adapted to glitchvy (no SSO; sqlite/mysql; Laravel `back/` + Vite SPA `front/`). Surfaces: `setup.sh`, `back/.env.*.example`, `front/.env.*.example`, `.gitignore`. Commit: `feat(deploy): add the first-run setup script for the server` (`e992181`). — **done**
+- **T2** (S6, S7, S8) — `scripts/deploy/deploy.sh`, `scripts/deploy/deploy.conf`, `scripts/deploy/deploy.conf.example`, `scripts/deploy/.env.example`. Surfaces: `scripts/deploy/**`. Commit: `feat(deploy): add the local deploy script and its configuration` (`2216abe`). — **done**
+- **T3** (S9) — GitLab CI `deploy` + `rollback` stages with SSH setup and tag rules. Surfaces: `.gitlab-ci.yml`. Commit: `feat(ci): add the deploy and rollback stages` (`1c56a69`). — **done**
+- **T4** (S10, S11) — `DEPLOY.md`, the changelog entry and the `.gitignore` entries for the deploy secrets. Surfaces: `DEPLOY.md`, `CHANGELOG.md`, `.gitignore`. Commit: `docs(deploy): document the deployment flow`. — **done**
+
+### Slice boundaries
+
+The ~400-line slice guidance does not fit this feature: `setup.sh` (856 lines) and `scripts/deploy/deploy.sh` (1008 lines) are each a single cohesive script — splitting them would leave a broken script in the middle of the branch. The delivery strategy is therefore one commit per script plus one commit per configuration surface, so a reviewer reads the setup and the deploy independently.
+
+## Log
+
+- **L1** — User request (verbatim): "e el resto de proyectos(doeumentos/programacion) exissten dos scrips(deploy,setup) me gustaria implmentarlos tambien aqui".
+- **L2** — Reference implementations read: `sso/setup.sh` (931 lines), `sso/scripts/deploy/deploy.sh` (1008 lines), `sso/scripts/deploy/deploy.conf`, `sso/scripts/deploy/.env.example`, `sso/DEPLOY.md`, `sso/.gitlab-ci.yml` (deploy/rollback stages).
+- **L3** — glitchvy differences from `sso` that drive the adaptation: no SSO integration at all; `back/` is a standalone Laravel 13 app (`php ^8.3`, pint, phpunit) inside a pnpm monorepo (`packages/sdk` + `front`); the admin SPA (`front/`, Vue 3 + Ionic) has no `lint` script and no env template yet, and its build-time env is `VITE_GLITCHVY_API_URL` (defaults to `/api`) and `VITE_GLITCHVY_CSP_CONNECT_SRC`.
+- **L4** — User decisions (verbatim): hosting "Mismo hosting de sso/oneSpend (SSH)"; scope "setup.sh + scripts/deploy/ + DEPLOY.md + CI deploy stage"; SDK "No, publish aparte".
+- **L5** — Deploy paths follow the `sso` convention on the shared host: `DEPLOY_PATH_BACKEND=/home/u902881280/public_html/glitchvy/back`, `DEPLOY_PATH_FRONTEND=/home/u902881280/public_html/glitchvy`.
+- **L6** — The deploy does NOT gate on `vendor/bin/pint --test`: the codebase is not pint-clean yet (78 files flagged) and the CI lint stage only runs `composer validate`, so that gate would block every deploy on pre-existing violations. The deploy gate is the PHPUnit suite (90 tests, green).
+- **L7** — Verification: `setup.sh --non-interactive` was executed against a copy of `back/` in a scratch directory: it created the `.env` from the template, generated the APP_KEY, ran the migrations, linked the storage and reported 8/8 health checks as PASS. The deploy checks were executed for real: PHPUnit 90/90, admin SPA `vue-tsc` clean + 38 vitest tests, SDK `tsc` clean + 87 vitest tests. `deploy.sh --dry-run` completes without touching the server.
+- **L8** — The admin SPA is built on a development machine and uploaded, so the deploy script uploads only the backend env templates to the server and `setup.sh` skips the frontend steps when `front/package.json` is absent (the server only holds the built `dist/`).

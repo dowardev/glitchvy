@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Deployment tooling**
+
+- `setup.sh`: the first-run configuration of the server (backend env from the templates, `APP_KEY`, migrations, storage link, the optional admin user and a health-check report). It is uploaded by the deploy script but never executed automatically, because it prompts for secrets.
+- `scripts/deploy/deploy.sh`: the local deploy (checks, build, upload over SSH, remote migrations and caches) with its configuration in `scripts/deploy/deploy.conf` and the host values in the gitignored `scripts/deploy/.env`.
+- `.gitlab-ci.yml`: the `deploy` and `rollback` stages, running on semver tags.
+- `DEPLOY.md`: the deployment guide (first run, local deploy, CI deploy, rollback, configuration reference and troubleshooting).
+
 **`dowardev/glitchvy-server`** (Laravel)
 
 - Project ownership, tracked in [issue #2](https://gitlab.com/dowardev/glitchvy/-/issues/2): a project belongs to an admin, and the admin project endpoints (`GET`/`POST /api/projects`, `GET`/`POST /api/projects/{id}/api-keys`) are scoped by the authenticated admin. A project of another admin answers `404`, so the caller cannot learn that it exists. The projects that already existed are assigned to the operator (the first admin) by the migration, so none of them is left unreachable. The admin SPA reads the same scoped endpoints, so its project list and API key listing are scoped by the same relation.
