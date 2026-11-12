@@ -202,10 +202,34 @@ backend_deploy:
         mkdir -p storage/framework/views storage/framework/cache/data storage/framework/sessions storage/app/private &&
         chmod -R 775 storage bootstrap/cache &&
         composer install --no-dev --optimize-autoloader --no-interaction &&
-        php artisan migrate --force &&
         php artisan config:cache &&
         php artisan route:cache &&
         rm /tmp/backend.tar.gz
+      "
+
+# The migrations are a separate MANUAL job: a pending migration can drop a
+# table or a column, and that must not run unattended on a tag push.
+backend_migrate:
+  stage: deploy
+  image: alpine:3.20
+  extends: [.ssh_setup, .tag_rules]
+  when: manual
+  needs:
+    - backend_deploy
+  script:
+    - |
+      ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "
+        set -e
+        cd $DEPLOY_PATH_BACKEND &&
+        PENDING=\$(php artisan migrate --pretend --no-ansi 2>/dev/null || true) &&
+        if echo \"\$PENDING\" | grep -qiE 'drop table|drop column|truncate|rename column'; then
+          if [ \"\${ALLOW_DESTRUCTIVE_MIGRATIONS:-}\" != '1' ]; then
+            echo 'Destructive migration detected. Review it, then set ALLOW_DESTRUCTIVE_MIGRATIONS=1 as a CI variable to apply it.' >&2;
+            exit 1;
+          fi;
+          echo 'WARNING: applying a destructive migration (ALLOW_DESTRUCTIVE_MIGRATIONS=1)';
+        fi &&
+        php artisan migrate --force
       "
 
 frontend_deploy:
@@ -274,7 +298,6 @@ rollback_backend:
         mkdir -p storage/framework/views storage/framework/cache/data storage/framework/sessions storage/app/private &&
         chmod -R 775 storage bootstrap/cache &&
         composer install --no-dev --optimize-autoloader --no-interaction &&
-        php artisan migrate --force &&
         php artisan config:cache &&
         php artisan route:cache &&
         rm /tmp/backend-rollback.tar.gz

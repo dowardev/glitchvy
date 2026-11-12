@@ -112,7 +112,15 @@ cp scripts/deploy/.env.example scripts/deploy/.env   # once, then fill in your v
 ./scripts/deploy/deploy.sh
 ```
 
-The script runs the checks (backend PHPUnit, SDK `tsc` + vitest, SPA `vue-tsc` + vitest), builds the backend and the SPA, uploads both tarballs with `scp` and runs the remote commands from `scripts/deploy/deploy.conf` (`composer install`, `artisan migrate --force`, `config:cache`, `route:cache`).
+The script runs the checks (backend PHPUnit, SDK `tsc` + vitest, SPA `vue-tsc` + vitest), builds the backend and the SPA, uploads both tarballs with `scp` and runs the remote commands from `scripts/deploy/deploy.conf` (`composer install`, `config:cache`, `route:cache`).
+
+**The deploy never migrates the database.** A pending migration can drop a table or a column, so it only runs when you ask for it:
+
+```bash
+./scripts/deploy/deploy.sh --migrate
+```
+
+The guard reads the SQL that `artisan migrate --pretend` would run and refuses to apply a destructive one (`DROP TABLE`, `DROP COLUMN`, `TRUNCATE`, `RENAME COLUMN`) unless you set `ALLOW_DESTRUCTIVE_MIGRATIONS=1` on purpose.
 
 Options:
 
@@ -122,6 +130,7 @@ Options:
 | `--all` | Deploy both (the default). |
 | `--tag v1.2.3` | Check out the tag first, then deploy it. |
 | `--skip-checks` | Skip the checks (faster, use with care). |
+| `--migrate` | Also run the pending migrations (opt-in, with a destructive-migration guard). |
 | `--dry-run` | Print every command without running `scp`/`ssh`. |
 | `--verbose` | Show the executed commands. |
 
@@ -144,7 +153,8 @@ The deploy script builds the SPA with `pnpm --filter glitchvy-admin build` from 
 
 Pushing a semver tag (`v1.2.3`, `v1.2.3-rc.1`) runs the pipeline with the `deploy` stage:
 
-- `backend_deploy` — ships `back/` (without `vendor`, `.env*`, the local sqlite database and the generated caches), then runs `composer install --no-dev`, `artisan migrate --force`, `config:cache` and `route:cache` on the server.
+- `backend_deploy` — ships `back/` (without `vendor`, `.env*`, the local sqlite database and the generated caches), then runs `composer install --no-dev`, `config:cache` and `route:cache` on the server. It does **not** migrate.
+- `backend_migrate` — **manual** job: runs the pending migrations with the same destructive-migration guard as `--migrate`. Start it explicitly after reviewing what the migration does.
 - `frontend_deploy` — builds the SPA and ships `front/dist/`.
 
 The `rollback` stage adds two **manual** jobs (`rollback_backend`, `rollback_frontend`) that redeploy the previous tag.
@@ -160,6 +170,7 @@ Required GitLab CI/CD variables (Settings → CI/CD → Variables):
 | `SSH_KNOWN_HOSTS` | the `known_hosts` line |
 | `DEPLOY_PATH_BACKEND` | `/home/u902881280/public_html/glitchvy/back` |
 | `DEPLOY_PATH_FRONTEND` | `/home/u902881280/public_html/glitchvy` |
+| `ALLOW_DESTRUCTIVE_MIGRATIONS` | optional: `1` lets the manual `backend_migrate` job apply a destructive migration |
 
 ---
 

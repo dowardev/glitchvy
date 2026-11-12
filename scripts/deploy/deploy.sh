@@ -10,6 +10,7 @@
 #   ./scripts/deploy/deploy.sh --all      # both (explicit)
 #   ./scripts/deploy/deploy.sh --tag v1.2.3   # checkout the tag first, then deploy
 #   ./scripts/deploy/deploy.sh --skip-checks  # skip the checks (faster, use with caution)
+#   ./scripts/deploy/deploy.sh --migrate     # also run the pending migrations (opt-in)
 #   ./scripts/deploy/deploy.sh --dry-run      # print the commands without running scp/ssh
 #   ./scripts/deploy/deploy.sh --verbose      # show every command (debug)
 #   ./scripts/deploy/deploy.sh -h|--help      # show this help
@@ -51,6 +52,7 @@ NC='\033[0m'
 VERBOSE=false
 DRY_RUN=false
 SKIP_CHECKS=false
+RUN_MIGRATIONS=false
 DEPLOY_BACKEND=true
 DEPLOY_FRONTEND=true
 TARGET_REF=""
@@ -72,6 +74,7 @@ while [[ $# -gt 0 ]]; do
     --all)           DEPLOY_BACKEND=true; DEPLOY_FRONTEND=true; shift ;;
     --tag)           TARGET_REF="$2"; shift 2 ;;
     --skip-checks)   SKIP_CHECKS=true; shift ;;
+    --migrate)      RUN_MIGRATIONS=true; shift ;;
     --dry-run)       DRY_RUN=true; shift ;;
     --verbose)       VERBOSE=true; shift ;;
     -h|--help)
@@ -689,6 +692,41 @@ deploy_docs() {
 }
 
 # ============================================================
+# Migrations (opt-in) — never run unattended
+# ============================================================
+# The deploy never migrates the production database on its own: a pending
+# migration can drop a table or a column, and that must not happen without
+# a human in the loop. The operator asks for it explicitly (--migrate), and
+# even then the guard refuses to run a destructive migration unless
+# ALLOW_DESTRUCTIVE_MIGRATIONS=1 is set on purpose.
+run_migrations() {
+  if [[ "$RUN_MIGRATIONS" != "true" ]]; then
+    log_debug "Migrations skipped (not requested with --migrate)"
+    return 0
+  fi
+
+  log_phase "MIGRATIONS"
+
+  local remote_cmd
+  remote_cmd=$(cat <<EOF
+set -e
+cd "${DEPLOY_PATH_BACKEND}"
+PENDING=\$(php artisan migrate --pretend --no-ansi 2>/dev/null || true)
+if echo "\$PENDING" | grep -qiE 'drop table|drop column|truncate|rename column'; then
+  if [ "\${ALLOW_DESTRUCTIVE_MIGRATIONS:-}" != "1" ]; then
+    echo "Destructive migration detected. Review it, then re-run with ALLOW_DESTRUCTIVE_MIGRATIONS=1 to apply it." >&2
+    exit 1
+  fi
+  echo "WARNING: applying a destructive migration (ALLOW_DESTRUCTIVE_MIGRATIONS=1)"
+fi
+${BACKEND_MIGRATE_CMD:-php artisan migrate --force}
+EOF
+)
+
+  run_remote "Backend: run the pending migrations" "$remote_cmd"
+}
+
+# ============================================================
 # Setup Script (optional) — uploads a first-run setup script
 # ============================================================
 # If SETUP_SCRIPT is set in deploy.conf (path relative to repo root), the
@@ -960,6 +998,10 @@ case "$PROJECT_TYPE" in
   single)    deploy_single ;;
   docs)      deploy_docs ;;
 esac
+
+if [[ "$PROJECT_TYPE" == "fullstack" ]]; then
+  run_migrations
+fi
 
 deploy_setup
 

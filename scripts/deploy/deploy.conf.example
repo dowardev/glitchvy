@@ -24,7 +24,12 @@ BACKEND_ARTIFACT_EXCLUDES=".git node_modules vendor .env* storage/* bootstrap/ca
 # storage/framework/* is excluded from the tarball, so the framework dirs
 # must be created on the server or Blade fails with "Please provide a valid
 # cache path."
-BACKEND_REMOTE_CMD="mkdir -p storage/framework/views storage/framework/cache/data storage/framework/sessions storage/app/private && chmod -R 775 storage bootstrap/cache && composer install --no-dev --optimize-autoloader --no-interaction && php artisan migrate --force && php artisan config:cache && php artisan route:cache"
+BACKEND_REMOTE_CMD="mkdir -p storage/framework/views storage/framework/cache/data storage/framework/sessions storage/app/private && chmod -R 775 storage bootstrap/cache && composer install --no-dev --optimize-autoloader --no-interaction && php artisan config:cache && php artisan route:cache"
+
+# Migrations are NOT part of the deploy: they only run when the operator asks
+# for them (deploy.sh --migrate) or when the manual CI job backend_migrate is
+# started. A destructive migration must never run unattended.
+BACKEND_MIGRATE_CMD="php artisan migrate --force"
 
 # Frontend build command (runs in the monorepo root, pnpm workspace)
 FRONTEND_BUILD_CMD="pnpm install --frozen-lockfile && pnpm --filter glitchvy-admin build"
