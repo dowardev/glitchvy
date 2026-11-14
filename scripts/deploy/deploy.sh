@@ -204,6 +204,23 @@ docs)
       ;;
 esac
 
+# Check that a private key file is a real private key. ssh-keygen parses it
+# without printing anything; a file that is not a key is rejected before it is
+# installed or used as the ssh identity.
+validate_private_key() {
+    local key_file="$1"
+    if ! command -v ssh-keygen >/dev/null 2>&1; then
+        log_warn "ssh-keygen not found — the private key format is not validated"
+        return 0
+    fi
+    if ssh-keygen -y -f "$key_file" >/dev/null 2>&1; then
+        log_debug "Private key format OK: $key_file"
+        return 0
+    fi
+    log_error "Invalid private key: $key_file (ssh-keygen could not read it)"
+    return 1
+}
+
 # ============================================================
 # SSH Setup — mirrors .gitlab-ci.yml .ssh_setup exactly
 # ============================================================
@@ -226,13 +243,22 @@ setup_ssh() {
       USE_KEY_FILE=true
       KEY_SOURCE="existing-file"
     else
-      echo "$SSH_PRIVATE_KEY" > "$ssh_dir/id_rsa"
+      # Validate the key before it becomes the ssh identity: a malformed key
+      # would fail later with an opaque ssh error, and a wrong file must never
+      # be installed as ~/.ssh/id_rsa.
+      local key_tmp
+      key_tmp="$(mktemp)"
+      printf '%s\n' "$SSH_PRIVATE_KEY" > "$key_tmp"
+      chmod 600 "$key_tmp"
+      validate_private_key "$key_tmp" || { rm -f "$key_tmp"; exit 2; }
+      mv "$key_tmp" "$ssh_dir/id_rsa"
       chmod 600 "$ssh_dir/id_rsa"
       log_info "SSH auth: SSH_PRIVATE_KEY (GitLab CI style)"
       USE_KEY_FILE=true
       KEY_SOURCE="SSH_PRIVATE_KEY"
     fi
   elif [[ -n "${SSH_PRIVATE_KEY_PATH:-}" && -f "${SSH_PRIVATE_KEY_PATH:-}" ]]; then
+    validate_private_key "$SSH_PRIVATE_KEY_PATH" || exit 2
     log_info "SSH auth: SSH_PRIVATE_KEY_PATH ($SSH_PRIVATE_KEY_PATH)"
     USE_KEY_FILE=true
     KEY_SOURCE="SSH_PRIVATE_KEY_PATH"
@@ -326,6 +352,35 @@ fi
 # ============================================================
 # Helpers
 # ============================================================
+# Build a tarball without eval. The exclude patterns come from the committed
+# config, so they must never be evaluated as shell code: the patterns are read
+# into an array and passed to tar as plain arguments.
+create_tarball() {
+    local desc="$1" tarball="$2" source="$3" excludes="$4"
+    local -a patterns=() args=()
+    local pattern
+    read -r -a patterns <<< "$excludes"
+    for pattern in "${patterns[@]}"; do
+        args+=("--exclude=$pattern")
+    done
+
+    log_step "$desc"
+    log_debug "Command: tar -czf $tarball ${args[*]} -C $source ."
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_debug "[dry-run] tar -czf $tarball ${args[*]} -C $source ."
+        return 0
+    fi
+
+    if tar -czf "$tarball" "${args[@]}" -C "$source" .; then
+        log_info "✓ $desc completed"
+        return 0
+    else
+        log_err "✗ $desc failed"
+        return 1
+    fi
+}
+
 run_cmd() {
   local desc="$1"
   shift
@@ -569,19 +624,10 @@ deploy_fullstack() {
     # vendor/ directory is not shipped, so the server resolves them against
     # its own PHP version and composer.lock.
 
-    # Build excludes with globbing disabled so patterns like ".env*" reach
-    # tar literally. With globbing on, ".env*" expands against the cwd (repo
-    # root has .env.example) and the real .env silently ships in the tarball,
-    # overwriting the server's .env on extract.
-    set -f
-    EXCLUDES=""
-    for excl in $BACKEND_ARTIFACT_EXCLUDES; do
-      EXCLUDES="$EXCLUDES --exclude='$excl'"
-    done
-    set +f
-
-    run_cmd "Backend: create tarball" \
-      "eval tar -czf '$TARBALL' $EXCLUDES -C '$BUILD_DIR' ."
+    # The exclude patterns reach tar literally and are never evaluated as
+    # shell code (see create_tarball): a tampered config cannot inject
+    # commands here.
+    create_tarball "Backend: create tarball" "$TARBALL" "$BUILD_DIR" "$BACKEND_ARTIFACT_EXCLUDES"
 
     run_cmd "Backend: cleanup build dir" \
       "rm -rf '$TMP_ROOT'"
@@ -615,8 +661,12 @@ EOF
 
     TARBALL="/tmp/frontend.tar.gz"
 
-    run_cmd "Frontend: create tarball from dist/" \
-      "[[ -d $FRONTEND_ARTIFACT_SOURCE ]] || { log_err \"$FRONTEND_ARTIFACT_SOURCE missing — build failed?\"; exit 1; } && tar -czf '$TARBALL' -C $FRONTEND_ARTIFACT_SOURCE ."
+    if [[ ! -d "$FRONTEND_ARTIFACT_SOURCE" ]]; then
+      log_err "$FRONTEND_ARTIFACT_SOURCE missing — build failed?"
+      return 1
+    fi
+
+    create_tarball "Frontend: create tarball from dist/" "$TARBALL" "$FRONTEND_ARTIFACT_SOURCE" ""
 
     run_cmd "Frontend: upload tarball to server" \
       "scp ${SCP_OPTS[*]} '$TARBALL' '$SSH_USER@$SSH_HOST:/tmp/frontend.tar.gz'"
@@ -641,16 +691,8 @@ deploy_single() {
   log_phase "DEPLOY"
 
   TARBALL="/tmp/deploy.tar.gz"
-  # Globbing off so exclude patterns reach tar literally (see backend build).
-  set -f
-  EXCLUDES=""
-  for excl in $ARTIFACT_EXCLUDES; do
-    EXCLUDES="$EXCLUDES --exclude='$excl'"
-  done
-  set +f
-
-  run_cmd "Create deployment tarball" \
-    "eval tar -czf '$TARBALL' $EXCLUDES ."
+  # Same as the backend build: no eval, the patterns are plain tar arguments.
+  create_tarball "Create deployment tarball" "$TARBALL" "." "$ARTIFACT_EXCLUDES"
 
   run_cmd "Upload tarball to server" \
     "scp ${SCP_OPTS[*]} '$TARBALL' '$SSH_USER@$SSH_HOST:/tmp/deploy.tar.gz'"

@@ -140,6 +140,13 @@ backup_file() {
 
 sed_set() {
     local file="$1" key="$2" val="$3"
+    # A newline cannot be represented in a .env file: the value would break
+    # the file into two lines and the rest of it would be parsed as a
+    # different variable. Refuse it instead of writing a broken .env.
+    if [[ "$val" == *$'\n'* || "$val" == *$'\r'* ]]; then
+        log_error "Refusing to write '$key': the value contains a newline"
+        return 1
+    fi
     local escaped_val="$val"
     local needs_quoting=false
     if [[ "$val" =~ [[:space:]#\"\'] ]] || [ -z "$val" ]; then
