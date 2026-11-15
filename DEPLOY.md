@@ -176,7 +176,7 @@ Required GitLab CI/CD variables (Settings → CI/CD → Variables):
 
 ## 4. Rollback
 
-From CI: run the `rollback_backend` / `rollback_frontend` job of the tag pipeline. Both roll back to the newest **stable** release older than the tag being deployed (prereleases and malformed tags never qualify).
+From CI: run the `rollback_backend` / `rollback_frontend` job of the tag pipeline. Both roll back to the newest **stable** release older than the tag being deployed, selected by `scripts/ci/previous-tag.sh` (prereleases and malformed tags never qualify, and a tag that is not a semver fails with a clear message).
 
 From your machine:
 

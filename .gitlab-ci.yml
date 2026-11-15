@@ -270,22 +270,11 @@ rollback_backend:
     - apk add --no-cache git
   script:
     - |
-      # Roll back to the newest stable release OLDER than the tag being
-      # deployed. Prereleases and malformed tags never qualify, and the
-      # version comparison is numeric (not lexicographic).
-      PREVIOUS_TAG=$(git tag --list "v*" \
-        | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-        | awk -v cur="${CI_COMMIT_TAG:-}" '
-            function vkey(v,   p) {
-              sub(/^v/, "", v); split(v, p, ".");
-              return p[1] * 1000000 + p[2] * 1000 + p[3]
-            }
-            BEGIN { ck = vkey(cur) }
-            { k = vkey($0); if (k < ck && (!best || k > bk)) { best = $0; bk = k } }
-            END { print best }')
-      if [ -z "$PREVIOUS_TAG" ]; then echo "No hay tag estable anterior para rollback"; exit 1; fi
-      echo "Rolling back to $PREVIOUS_TAG"
+      # The newest stable release older than the tag being deployed. The
+      # selection lives in one script so both rollback jobs agree on it.
       git fetch --tags
+      PREVIOUS_TAG=$(scripts/ci/previous-tag.sh "$CI_COMMIT_TAG")
+      echo "Rolling back to $PREVIOUS_TAG"
       git checkout "$PREVIOUS_TAG" -- back/
       tar -czf /tmp/backend-rollback.tar.gz \
         --exclude='.git' \
@@ -329,22 +318,11 @@ rollback_frontend:
     - corepack enable
   script:
     - |
-      # Roll back to the newest stable release OLDER than the tag being
-      # deployed. Prereleases and malformed tags never qualify, and the
-      # version comparison is numeric (not lexicographic).
-      PREVIOUS_TAG=$(git tag --list "v*" \
-        | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-        | awk -v cur="${CI_COMMIT_TAG:-}" '
-            function vkey(v,   p) {
-              sub(/^v/, "", v); split(v, p, ".");
-              return p[1] * 1000000 + p[2] * 1000 + p[3]
-            }
-            BEGIN { ck = vkey(cur) }
-            { k = vkey($0); if (k < ck && (!best || k > bk)) { best = $0; bk = k } }
-            END { print best }')
-      if [ -z "$PREVIOUS_TAG" ]; then echo "No hay tag estable anterior para rollback"; exit 1; fi
-      echo "Rolling back to $PREVIOUS_TAG"
+      # The newest stable release older than the tag being deployed. The
+      # selection lives in one script so both rollback jobs agree on it.
       git fetch --tags
+      PREVIOUS_TAG=$(scripts/ci/previous-tag.sh "$CI_COMMIT_TAG")
+      echo "Rolling back to $PREVIOUS_TAG"
       git checkout "$PREVIOUS_TAG" -- front/
       pnpm install --frozen-lockfile
       pnpm --filter glitchvy-admin build

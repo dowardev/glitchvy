@@ -210,8 +210,16 @@ esac
 validate_private_key() {
     local key_file="$1"
     if ! command -v ssh-keygen >/dev/null 2>&1; then
-        log_warn "ssh-keygen not found — the private key format is not validated"
-        return 0
+        # Returning success here would be a false sense of validation: the
+        # key would only fail later at connection time with an opaque error.
+        # Opt out explicitly if the machine really has no ssh-keygen.
+        if [[ "${ALLOW_UNVALIDATED_SSH_KEY:-}" == "1" ]]; then
+            log_warn "ssh-keygen not found — the private key format is NOT validated (ALLOW_UNVALIDATED_SSH_KEY=1)"
+            return 0
+        fi
+        log_error "ssh-keygen not found — the private key cannot be validated"
+        log_error "Install the OpenSSH client, or set ALLOW_UNVALIDATED_SSH_KEY=1 to deploy without validating the key"
+        return 1
     fi
     if ssh-keygen -y -f "$key_file" >/dev/null 2>&1; then
         log_debug "Private key format OK: $key_file"
@@ -240,6 +248,7 @@ setup_ssh() {
   if [[ -n "${SSH_PRIVATE_KEY:-}" ]]; then
     if [[ -f "$ssh_dir/id_rsa" ]]; then
       log_warn "SSH auth: SSH_PRIVATE_KEY set but $ssh_dir/id_rsa already exists — keeping existing key"
+      validate_private_key "$ssh_dir/id_rsa" || exit 2
       USE_KEY_FILE=true
       KEY_SOURCE="existing-file"
     else
@@ -359,6 +368,9 @@ create_tarball() {
     local desc="$1" tarball="$2" source="$3" excludes="$4"
     local -a patterns=() args=()
     local pattern
+    # The exclude list is a space-separated list of glob patterns, and a
+    # pattern cannot contain spaces (they would split it in two). The
+    # deployment config documents that contract.
     read -r -a patterns <<< "$excludes"
     for pattern in "${patterns[@]}"; do
         args+=("--exclude=$pattern")

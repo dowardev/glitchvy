@@ -494,18 +494,19 @@ configure_backend() {
     sed_set ".env" "GLITCHVY_STORAGE_DISK" "$storage_disk"
     sed_set ".env" "GLITCHVY_RATE_LIMIT" "$rate_limit"
 
-    # SSO integration (planned): the deploy can carry the SSO credentials so
+    # SSO integration (planned, tracked in odd/tasks/deploy-tooling.md L13):
+    # the deploy can carry the SSO credentials so
     # the server env file is ready when the server-side SSO client lands.
     # They are written only when the operator provides them, so nothing
     # unused ends up in the file.
     if [ -n "${GLITCHVY_SSO_URL:-}" ]; then
-        sed_set ".env" "SSO_URL" "$GLITCHVY_SSO_URL"
+        sed_set ".env" "SSO_URL" "$GLITCHVY_SSO_URL" || exit 3
     fi
     if [ -n "${GLITCHVY_SSO_CLIENT_ID:-}" ]; then
-        sed_set ".env" "SSO_CLIENT_ID" "$GLITCHVY_SSO_CLIENT_ID"
+        sed_set ".env" "SSO_CLIENT_ID" "$GLITCHVY_SSO_CLIENT_ID" || exit 3
     fi
     if [ -n "${GLITCHVY_SSO_CLIENT_SECRET:-}" ]; then
-        sed_set ".env" "SSO_CLIENT_SECRET" "$GLITCHVY_SSO_CLIENT_SECRET"
+        sed_set ".env" "SSO_CLIENT_SECRET" "$GLITCHVY_SSO_CLIENT_SECRET" || exit 3
     fi
 
     verify_db_connection "$db_connection"
@@ -762,13 +763,14 @@ configure_frontend() {
     csp_src="$(ask "VITE_GLITCHVY_CSP_CONNECT_SRC" "${prev_csp_src:-'self'}")"
     sed_set "$target_file" "VITE_GLITCHVY_CSP_CONNECT_SRC" "$csp_src"
 
-    # SSO integration (planned): the SPA bakes these at build time, so they
+    # SSO integration (planned, tracked in odd/tasks/deploy-tooling.md L13):
+    # the SPA bakes these at build time, so they
     # are written only when the operator provides them.
     if [ -n "${GLITCHVY_SSO_URL:-}" ]; then
-        sed_set "$target_file" "VITE_SSO_URL" "$GLITCHVY_SSO_URL"
+        sed_set "$target_file" "VITE_SSO_URL" "$GLITCHVY_SSO_URL" || exit 3
     fi
     if [ -n "${GLITCHVY_SSO_CLIENT_ID:-}" ]; then
-        sed_set "$target_file" "VITE_SSO_CLIENT_ID" "$GLITCHVY_SSO_CLIENT_ID"
+        sed_set "$target_file" "VITE_SSO_CLIENT_ID" "$GLITCHVY_SSO_CLIENT_ID" || exit 3
     fi
 
     log_ok "Admin SPA configured ($target_file)"
