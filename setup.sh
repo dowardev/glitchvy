@@ -657,7 +657,9 @@ migrate_db() {
     local pending
     # If the dry run fails, the pending migrations are unknown: the guard
     # cannot decide, so the setup stops instead of running them blind.
-    if ! pending=$(php artisan migrate --pretend --no-ansi 2>/dev/null); then
+    # --force: in production Laravel asks for a confirmation and cancels
+    # the command without it.
+    if ! pending=$(php artisan migrate --pretend --force --no-ansi 2>/dev/null); then
         log_error "Cannot read the pending migrations (migrate --pretend failed)"
         exit 5
     fi

@@ -787,7 +787,7 @@ run_migrations() {
   remote_cmd=$(cat <<EOF
 set -e
 cd "${DEPLOY_PATH_BACKEND}"
-PENDING=\$(php artisan migrate --pretend --no-ansi 2>/dev/null) || {
+PENDING=\$(php artisan migrate --pretend --force --no-ansi 2>/dev/null) || {
   echo "Cannot read the pending migrations (migrate --pretend failed)." >&2
   exit 1
 }
