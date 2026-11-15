@@ -80,6 +80,8 @@ load_function() {
             if (depth <= 0) { inside = 0; exit }
         }
     ' "$script" > "$target"
+    # The named exit codes of the script travel with the function.
+    grep -E "^readonly EXIT_[A-Z_]+=" "$script" >> "$target" || true
 }
 
 # ============================================================
