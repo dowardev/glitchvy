@@ -237,8 +237,8 @@ setup_ssh() {
 
   if [[ "$DRY_RUN" == "true" ]]; then
     log_debug "SKIP setup_ssh (dry-run) — no ~/.ssh writes"
-    SSH_OPTS=(-p "$SSH_PORT" -o BatchMode=yes)
-    SCP_OPTS=(-P "$SSH_PORT")
+    SSH_OPTS=(-p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
+    SCP_OPTS=(-P "$SSH_PORT" -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
     return 0
   fi
 
@@ -305,8 +305,8 @@ SSH_CONFIG
     # and losing its loaded keys. ssh falls back to the default identity
     # file ~/.ssh/id_rsa automatically.
     unset SSH_AUTH_SOCK SSH_AGENT_PID 2>/dev/null || true
-    SSH_OPTS=(-p "$SSH_PORT" -o BatchMode=yes)
-    SCP_OPTS=(-P "$SSH_PORT")
+    SSH_OPTS=(-p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
+    SCP_OPTS=(-P "$SSH_PORT" -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
   elif [[ "$USE_KEY_FILE" == "true" ]]; then
     eval "$(ssh-agent -s)" >/dev/null
     if [[ "$KEY_SOURCE" == "SSH_PRIVATE_KEY" ]]; then
@@ -315,11 +315,11 @@ SSH_CONFIG
       ssh-add "$SSH_PRIVATE_KEY_PATH" 2>/dev/null
     fi
     export SSH_AUTH_SOCK SSH_AGENT_PID
-    SSH_OPTS=(-p "$SSH_PORT" -o BatchMode=yes)
-    SCP_OPTS=(-P "$SSH_PORT")
+    SSH_OPTS=(-p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
+    SCP_OPTS=(-P "$SSH_PORT" -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
   else
-    SSH_OPTS=(-p "$SSH_PORT" -o BatchMode=yes)
-    SCP_OPTS=(-P "$SSH_PORT")
+    SSH_OPTS=(-p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
+    SCP_OPTS=(-P "$SSH_PORT" -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
     export SSH_AUTH_SOCK SSH_AGENT_PID
   fi
 
@@ -406,7 +406,10 @@ run_cmd() {
     return 0
   fi
 
-  if ( eval "$cmd" ); then
+  # The command string comes from the deploy config (operator controlled),
+  # but it is executed in its own shell instead of with eval, so the
+  # current shell can never be re-defined by it.
+  if ( bash -c "$cmd" ); then
     log_info "✓ $desc completed"
     return 0
   else

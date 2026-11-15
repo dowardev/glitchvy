@@ -145,7 +145,10 @@ sed_set() {
     # different variable. Refuse it instead of writing a broken .env.
     if [[ "$val" == *$'\n'* || "$val" == *$'\r'* ]]; then
         log_error "Refusing to write '$key': the value contains a newline"
-        return 1
+        # The value cannot be represented in an env file. Abort here, so
+        # every caller stops with the same documented exit code instead of
+        # continuing with a half-written file.
+        exit 7
     fi
     local escaped_val="$val"
     local needs_quoting=false
@@ -209,6 +212,7 @@ Exit codes:
   4   No TTY available (use --non-interactive) or DB connection failed
   5   Database migration or seeding failed
   6   Write permission error
+  7   Invalid value (a value that cannot be written to an env file)
 EOF
     exit 0
 }
@@ -500,13 +504,13 @@ configure_backend() {
     # They are written only when the operator provides them, so nothing
     # unused ends up in the file.
     if [ -n "${GLITCHVY_SSO_URL:-}" ]; then
-        sed_set ".env" "SSO_URL" "$GLITCHVY_SSO_URL" || exit 3
+        sed_set ".env" "SSO_URL" "$GLITCHVY_SSO_URL"
     fi
     if [ -n "${GLITCHVY_SSO_CLIENT_ID:-}" ]; then
-        sed_set ".env" "SSO_CLIENT_ID" "$GLITCHVY_SSO_CLIENT_ID" || exit 3
+        sed_set ".env" "SSO_CLIENT_ID" "$GLITCHVY_SSO_CLIENT_ID"
     fi
     if [ -n "${GLITCHVY_SSO_CLIENT_SECRET:-}" ]; then
-        sed_set ".env" "SSO_CLIENT_SECRET" "$GLITCHVY_SSO_CLIENT_SECRET" || exit 3
+        sed_set ".env" "SSO_CLIENT_SECRET" "$GLITCHVY_SSO_CLIENT_SECRET"
     fi
 
     verify_db_connection "$db_connection"
@@ -620,11 +624,32 @@ generate_app_key() {
     cd "$SCRIPT_DIR"
 }
 
+# The setup runs the migrations unattended, so a pending migration that
+# drops a table or a column must not run without a human in the loop. The
+# operator opts in explicitly with ALLOW_DESTRUCTIVE_MIGRATIONS=1.
+assert_no_destructive_migration() {
+    local pending="$1"
+    if ! printf '%s' "$pending" | grep -qiE 'drop table|drop column|truncate|rename column'; then
+        return 0
+    fi
+    if [ "${ALLOW_DESTRUCTIVE_MIGRATIONS:-}" != "1" ]; then
+        log_error "Destructive migration detected. Review it, then re-run with ALLOW_DESTRUCTIVE_MIGRATIONS=1 to apply it."
+        return 1
+    fi
+    log_warn "Applying a destructive migration (ALLOW_DESTRUCTIVE_MIGRATIONS=1)"
+    return 0
+}
+
 migrate_db() {
     CURRENT_STEP=$((CURRENT_STEP + 1))
     log_info "Step $CURRENT_STEP: Running database migrations..."
 
     cd "$BACK_DIR"
+    local pending
+    pending=$(php artisan migrate --pretend --no-ansi 2>/dev/null || true)
+    if ! assert_no_destructive_migration "$pending"; then
+        exit 5
+    fi
     php artisan migrate --force || { log_error "Migration failed"; exit 5; }
     link_storage
     log_ok "Database migrated"

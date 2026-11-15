@@ -86,7 +86,7 @@ Options:
 | `--no-backup` | Do not back up the existing `.env` files. |
 | `--skip-front-build` | Do not build the admin SPA. |
 
-Exit codes: `0` success, `2` missing prerequisite, `3` missing environment variable, `4` no TTY (or database connection failure), `5` migration/seed failure, `6` write permission error.
+Exit codes: `0` success, `2` missing prerequisite, `3` missing environment variable, `4` no TTY (or database connection failure), `5` migration/seed failure, `6` write permission error, `7` invalid value (a value that cannot be written to an env file, for example one that contains a newline).
 
 ### Unattended setup
 
@@ -269,7 +269,21 @@ Install pnpm with npm instead: `npm i -g pnpm@11.3.0`.
 
 ---
 
-## 8. Useful commands
+## 8. Tests
+
+The deployment tooling has its own test suite: the rollback tag selection,
+the env file writer, the destructive migration guard and the tarball
+exclusions.
+
+```bash
+# from the repository root
+bash scripts/deploy/tests/run-tests.sh
+```
+
+CI runs it in the `test:deploy-tooling` job of the `test` stage, so a
+broken deploy script never reaches a tag pipeline.
+
+## 9. Useful commands
 
 ```bash
 # Backend (from back/)
