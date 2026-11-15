@@ -18,6 +18,7 @@ DEPLOY_SCRIPT="$REPO_ROOT/scripts/deploy/deploy.sh"
 
 PASSED=0
 FAILED=0
+SKIPPED=0
 WORK_DIR=""
 
 cleanup() {
@@ -39,6 +40,11 @@ fail() {
 section() {
     echo ""
     echo "== $1"
+}
+
+skip() {
+    SKIPPED=$((SKIPPED + 1))
+    echo "  [SKIP] $1"
 }
 
 # Extract one function from a shell script and load it in isolation, with
@@ -138,14 +144,17 @@ fi
 section "setup.sh — the env file writer"
 # ============================================================
 env_dir="$(mktemp -d)"
-env_file="$env_dir/app.env"
-printf 'EXISTING=value\n' > "$env_file"
 
 load_function "$SETUP_SCRIPT" "sed_set" "$env_dir/sed_set.sh"
 cat >> "$env_dir/sed_set.sh" <<'EOF'
 log_error() { echo "ERR: $1"; }
 log_info()  { echo "INFO: $1"; }
 EOF
+
+# Every test gets its own file, so one test cannot change what another
+# one sees.
+env_file="$env_dir/valid.env"
+printf 'EXISTING=value\n' > "$env_file"
 
 # shellcheck source=/dev/null
 ( source "$env_dir/sed_set.sh"
@@ -158,8 +167,10 @@ fi
 
 # A newline cannot be represented in an env file: the writer has to refuse
 # it, report it with its own exit code and leave the file untouched.
+newline_file="$env_dir/newline.env"
+printf 'EXISTING=value\n' > "$newline_file"
 ( source "$env_dir/sed_set.sh"
-  sed_set "$env_file" "SSO_CLIENT_ID" "$(printf 'client\nINJECTED=1')" ) >/dev/null 2>&1
+  sed_set "$newline_file" "SSO_CLIENT_ID" "$(printf 'client\nINJECTED=1')" ) >/dev/null 2>&1
 status=$?
 if [ "$status" -eq 7 ]; then
     pass "refuses a value with a newline and returns the code 7"
@@ -167,7 +178,7 @@ else
     fail "refuses a value with a newline and returns the code 7" "exit code was $status"
 fi
 
-if grep -q 'INJECTED=1' "$env_file"; then
+if grep -q 'INJECTED=1' "$newline_file"; then
     fail "leaves the env file untouched when a value is refused" "the file was modified"
 else
     pass "leaves the env file untouched when a value is refused"
@@ -175,7 +186,7 @@ fi
 
 # The caller turns that code into the documented exit code of the script.
 ( source "$env_dir/sed_set.sh"
-  sed_set "$env_file" "SSO_CLIENT_ID" "$(printf 'client\nINJECTED=1')" || exit $? ) >/dev/null 2>&1
+  sed_set "$newline_file" "SSO_CLIENT_ID" "$(printf 'client\nINJECTED=1')" || exit $? ) >/dev/null 2>&1
 status=$?
 if [ "$status" -eq 7 ]; then
     pass "the caller aborts with the code the writer returned"
@@ -303,6 +314,28 @@ else
 fi
 
 # ============================================================
+section "the CI pipeline — the rollback verifies the restored release"
+# ============================================================
+ci_file="$REPO_ROOT/.gitlab-ci.yml"
+if grep -q 'php artisan --version' "$ci_file" && grep -q 'test -f \$DEPLOY_PATH_BACKEND/public/index.php' "$ci_file"; then
+    pass "the backend rollback verifies the restored application"
+else
+    fail "the backend rollback verifies the restored application" "the verification step is missing"
+fi
+
+if grep -q 'test -f \$DEPLOY_PATH_FRONTEND/index.html' "$ci_file"; then
+    pass "the frontend rollback verifies the restored build"
+else
+    fail "the frontend rollback verifies the restored build" "the verification step is missing"
+fi
+
+if grep -q 'ROLLBACK_TO_TAG' "$ci_file"; then
+    pass "the rollback accepts a manual target override"
+else
+    fail "the rollback accepts a manual target override" "the override is missing"
+fi
+
+# ============================================================
 section "scripts/deploy/deploy.sh — the dry run"
 # ============================================================
 # The dry run needs the same toolchain as a real deploy. When it is not
@@ -310,7 +343,7 @@ section "scripts/deploy/deploy.sh — the dry run"
 # skipped instead of reported as failures.
 if ! command -v php >/dev/null 2>&1 || ! command -v composer >/dev/null 2>&1 \
     || ! command -v pnpm >/dev/null 2>&1; then
-    echo "  [SKIP] the dry run needs php, composer and pnpm (not installed here)"
+    skip "the dry run needs php, composer and pnpm (not installed here)"
     dry_out=""
     dry_status=0
     skip_dry_run=true
@@ -321,7 +354,7 @@ else
 fi
 
 if [ "$skip_dry_run" = "true" ]; then
-    pass "the dry run finishes with exit code 0 (skipped: no toolchain)"
+    skip "the dry run finishes with exit code 0"
 elif [ "$dry_status" -eq 0 ]; then
     pass "the dry run finishes with exit code 0"
 else
@@ -329,7 +362,7 @@ else
 fi
 
 if [ "$skip_dry_run" = "true" ]; then
-    pass "the dry run says that it changed nothing (skipped: no toolchain)"
+    skip "the dry run says that it changed nothing"
 elif printf '%s' "$dry_out" | grep -q "DRY-RUN"; then
     pass "the dry run says that it changed nothing"
 else
@@ -337,7 +370,7 @@ else
 fi
 
 if [ "$skip_dry_run" = "true" ]; then
-    pass "the dry run reaches the end of the deploy (skipped: no toolchain)"
+    skip "the dry run reaches the end of the deploy"
 elif printf '%s' "$dry_out" | grep -q "DEPLOY COMPLETE"; then
     pass "the dry run reaches the end of the deploy"
 else
@@ -345,7 +378,7 @@ else
 fi
 
 if [ "$skip_dry_run" = "true" ]; then
-    pass "the dry run reports both the backend and the frontend target (skipped: no toolchain)"
+    skip "the dry run reports both the backend and the frontend target"
 elif printf '%s' "$dry_out" | grep -q "Backend:" && printf '%s' "$dry_out" | grep -q "Frontend:"; then
     pass "the dry run reports both the backend and the frontend target"
 else
@@ -356,6 +389,7 @@ fi
 echo ""
 echo "==========================================="
 echo "  passed: $PASSED"
+echo "  skipped: $SKIPPED"
 echo "  failed: $FAILED"
 echo "==========================================="
 

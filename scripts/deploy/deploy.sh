@@ -9,8 +9,8 @@
 #   ./scripts/deploy/deploy.sh --frontend # only the admin SPA
 #   ./scripts/deploy/deploy.sh --all      # both (explicit)
 #   ./scripts/deploy/deploy.sh --tag v1.2.3   # checkout the tag first, then deploy
-# Exit codes: 0 success, 2 missing prerequisite, 3 a pre-deploy check failed,
-# 4 the deploy command failed on the server, 5 the local command failed.
+# Exit codes: 0 success, 1 the deploy failed, 2 a missing prerequisite or an
+# invalid option.
 #
 #   ./scripts/deploy/deploy.sh --skip-checks  # skip the checks (faster, use with caution)
 #   ./scripts/deploy/deploy.sh --migrate     # also run the pending migrations (opt-in)
@@ -393,10 +393,17 @@ create_tarball() {
     fi
 }
 
-# The shared hosting drops connections from time to time: a failed
-# command is retried once before the deploy gives up.
-RETRY_ATTEMPTS="${RETRY_ATTEMPTS:-2}"
-RETRY_DELAY_SECONDS="${RETRY_DELAY_SECONDS:-5}"
+# The shared hosting drops connections from time to time. A command that
+# failed because the connection broke is retried once; a command that
+# failed for any other reason (a bad file, a permission error) is not,
+# because retrying it only delays the inevitable failure.
+retry_attempts() {
+    local exit_code="$1"
+    # ssh and scp use 255 for a connection failure.
+    [ "$exit_code" -eq 255 ] || return 1
+    [ "${RETRY_ATTEMPTS:-2}" -gt 1 ] || return 1
+    return 0
+}
 
 run_cmd() {
   local desc="$1"
@@ -411,24 +418,30 @@ run_cmd() {
     return 0
   fi
 
-  local attempt=1 exit_code=0
-  while true; do
-    # The command string comes from the deploy config (operator
-    # controlled), but it is executed in its own shell instead of with
-    # eval, so the current shell can never be re-defined by it.
+  # The command string comes from the deploy config (operator
+  # controlled), but it is executed in its own shell instead of with
+  # eval, so the current shell can never be re-defined by it.
+  local exit_code=0
+  if ( bash -c "$cmd" ); then
+    log_info "✓ $desc completed"
+    return 0
+  else
+    exit_code=$?
+  fi
+
+  if retry_attempts "$exit_code"; then
+    log_warn "✗ $desc failed to connect (exit $exit_code) — retrying in ${RETRY_DELAY_SECONDS:-5}s"
+    sleep "${RETRY_DELAY_SECONDS:-5}"
     if ( bash -c "$cmd" ); then
       log_info "✓ $desc completed"
       return 0
+    else
+      exit_code=$?
     fi
-    exit_code=$?
-    if [ "$attempt" -ge "$RETRY_ATTEMPTS" ]; then
-      log_err "✗ $desc failed (exit $exit_code)"
-      return $exit_code
-    fi
-    log_warn "✗ $desc failed (exit $exit_code) — retrying in ${RETRY_DELAY_SECONDS}s (attempt $((attempt + 1))/$RETRY_ATTEMPTS)"
-    attempt=$((attempt + 1))
-    sleep "$RETRY_DELAY_SECONDS"
-  done
+  fi
+
+  log_err "✗ $desc failed (exit $exit_code)"
+  return $exit_code
 }
 
 run_remote() {
@@ -443,21 +456,27 @@ run_remote() {
     return 0
   fi
 
-  local attempt=1 exit_code=0
-  while true; do
+  local exit_code=0
+  if ssh "${SSH_OPTS[@]}" "$SSH_USER@$SSH_HOST" "$remote_cmd"; then
+    log_info "✓ $desc completed"
+    return 0
+  else
+    exit_code=$?
+  fi
+
+  if retry_attempts "$exit_code"; then
+    log_warn "✗ $desc failed to connect (exit $exit_code) — retrying in ${RETRY_DELAY_SECONDS:-5}s"
+    sleep "${RETRY_DELAY_SECONDS:-5}"
     if ssh "${SSH_OPTS[@]}" "$SSH_USER@$SSH_HOST" "$remote_cmd"; then
       log_info "✓ $desc completed"
       return 0
+    else
+      exit_code=$?
     fi
-    exit_code=$?
-    if [ "$attempt" -ge "$RETRY_ATTEMPTS" ]; then
-      log_err "✗ $desc failed (exit $exit_code)"
-      return $exit_code
-    fi
-    log_warn "✗ $desc failed (exit $exit_code) — retrying in ${RETRY_DELAY_SECONDS}s (attempt $((attempt + 1))/$RETRY_ATTEMPTS)"
-    attempt=$((attempt + 1))
-    sleep "$RETRY_DELAY_SECONDS"
-  done
+  fi
+
+  log_err "✗ $desc failed (exit $exit_code)"
+  return $exit_code
 }
 
 # Ensure pnpm is available without re-running the global corepack mutation every deploy.
@@ -791,6 +810,7 @@ PENDING=\$(php artisan migrate --pretend --force --no-ansi 2>/dev/null) || {
   echo "Cannot read the pending migrations (migrate --pretend failed)." >&2
   exit 1
 }
+# The same list as in setup.sh: keep both in sync.
 if echo "\$PENDING" | grep -qiE 'drop table|drop column|drop index|drop constraint|drop foreign key|truncate|rename column|rename table'; then
   if [ "\${ALLOW_DESTRUCTIVE_MIGRATIONS:-}" != "1" ]; then
     echo "Destructive migration detected. Review it, then re-run with ALLOW_DESTRUCTIVE_MIGRATIONS=1 to apply it." >&2

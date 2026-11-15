@@ -138,6 +138,10 @@ backup_file() {
     fi
 }
 
+# The exit codes of this script (see usage()).
+readonly EXIT_WRITE_ERROR=6
+readonly EXIT_INVALID_VALUE=7
+
 sed_set() {
     local file="$1" key="$2" val="$3"
     # A newline cannot be represented in a .env file: the value would break
@@ -167,12 +171,12 @@ sed_set() {
     if grep -qE "^\s*${key}=" "$file" 2>/dev/null; then
         if ! sed -i "s|^[[:space:]]*${key}=.*|${key}=${escaped_val}|" "$file"; then
             log_error "Cannot write '$key' to $file"
-            return 6
+            return $EXIT_WRITE_ERROR
         fi
     else
         if ! printf '%s\n' "${key}=${escaped_val}" >> "$file"; then
             log_error "Cannot write '$key' to $file"
-            return 6
+            return $EXIT_WRITE_ERROR
         fi
     fi
     return 0
@@ -637,6 +641,7 @@ assert_no_destructive_migration() {
     # The operations that can lose data or break the schema: they drop a
     # table, a column, an index, a constraint or a foreign key, they empty
     # a table, or they rename a table or a column.
+    # The deploy script uses the same list: keep both in sync.
     local destructive_operations='drop table|drop column|drop index|drop constraint|drop foreign key|truncate|rename column|rename table'
     if ! printf '%s' "$pending" | grep -qiE "$destructive_operations"; then
         return 0
