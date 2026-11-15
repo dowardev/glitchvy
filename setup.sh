@@ -494,6 +494,20 @@ configure_backend() {
     sed_set ".env" "GLITCHVY_STORAGE_DISK" "$storage_disk"
     sed_set ".env" "GLITCHVY_RATE_LIMIT" "$rate_limit"
 
+    # SSO integration (planned): the deploy can carry the SSO credentials so
+    # the server env file is ready when the server-side SSO client lands.
+    # They are written only when the operator provides them, so nothing
+    # unused ends up in the file.
+    if [ -n "${GLITCHVY_SSO_URL:-}" ]; then
+        sed_set ".env" "SSO_URL" "$GLITCHVY_SSO_URL"
+    fi
+    if [ -n "${GLITCHVY_SSO_CLIENT_ID:-}" ]; then
+        sed_set ".env" "SSO_CLIENT_ID" "$GLITCHVY_SSO_CLIENT_ID"
+    fi
+    if [ -n "${GLITCHVY_SSO_CLIENT_SECRET:-}" ]; then
+        sed_set ".env" "SSO_CLIENT_SECRET" "$GLITCHVY_SSO_CLIENT_SECRET"
+    fi
+
     verify_db_connection "$db_connection"
     log_ok "Backend configured"
     cd "$SCRIPT_DIR"
@@ -747,6 +761,15 @@ configure_frontend() {
     sed_set "$target_file" "VITE_GLITCHVY_API_URL" "$api_url"
     csp_src="$(ask "VITE_GLITCHVY_CSP_CONNECT_SRC" "${prev_csp_src:-'self'}")"
     sed_set "$target_file" "VITE_GLITCHVY_CSP_CONNECT_SRC" "$csp_src"
+
+    # SSO integration (planned): the SPA bakes these at build time, so they
+    # are written only when the operator provides them.
+    if [ -n "${GLITCHVY_SSO_URL:-}" ]; then
+        sed_set "$target_file" "VITE_SSO_URL" "$GLITCHVY_SSO_URL"
+    fi
+    if [ -n "${GLITCHVY_SSO_CLIENT_ID:-}" ]; then
+        sed_set "$target_file" "VITE_SSO_CLIENT_ID" "$GLITCHVY_SSO_CLIENT_ID"
+    fi
 
     log_ok "Admin SPA configured ($target_file)"
     cd "$SCRIPT_DIR"
