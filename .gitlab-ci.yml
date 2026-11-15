@@ -329,6 +329,14 @@ rollback_backend:
         php artisan route:cache &&
         rm /tmp/backend-rollback.tar.gz
       "
+      # Verification: the job only reports success when the restored
+      # application is actually in place and boots.
+      ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "
+        set -e
+        test -f $DEPLOY_PATH_BACKEND/public/index.php &&
+        cd $DEPLOY_PATH_BACKEND &&
+        php artisan --version
+      "
 
 rollback_frontend:
   stage: rollback
@@ -364,4 +372,11 @@ rollback_frontend:
         mkdir -p $DEPLOY_PATH_FRONTEND &&
         tar -xzf /tmp/frontend-rollback.tar.gz -C $DEPLOY_PATH_FRONTEND &&
         rm /tmp/frontend-rollback.tar.gz
+      "
+      # Verification: the job only reports success when the restored build
+      # is actually in place.
+      ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "
+        set -e
+        test -f $DEPLOY_PATH_FRONTEND/index.html &&
+        test -d $DEPLOY_PATH_FRONTEND/assets
       "

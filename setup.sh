@@ -166,12 +166,12 @@ sed_set() {
     fi
     if grep -qE "^\s*${key}=" "$file" 2>/dev/null; then
         if ! sed -i "s|^[[:space:]]*${key}=.*|${key}=${escaped_val}|" "$file"; then
-            log_error "Cannot write '$key' to $file (write permission error?)"
+            log_error "Cannot write '$key' to $file"
             return 6
         fi
     else
         if ! printf '%s\n' "${key}=${escaped_val}" >> "$file"; then
-            log_error "Cannot write '$key' to $file (write permission error?)"
+            log_error "Cannot write '$key' to $file"
             return 6
         fi
     fi
@@ -634,7 +634,9 @@ generate_app_key() {
 # operator opts in explicitly with ALLOW_DESTRUCTIVE_MIGRATIONS=1.
 assert_no_destructive_migration() {
     local pending="$1"
-    # The operations that can lose data or break the schema.
+    # The operations that can lose data or break the schema: they drop a
+    # table, a column, an index, a constraint or a foreign key, they empty
+    # a table, or they rename a table or a column.
     local destructive_operations='drop table|drop column|drop index|drop constraint|drop foreign key|truncate|rename column|rename table'
     if ! printf '%s' "$pending" | grep -qiE "$destructive_operations"; then
         return 0
@@ -653,7 +655,12 @@ migrate_db() {
 
     cd "$BACK_DIR"
     local pending
-    pending=$(php artisan migrate --pretend --no-ansi 2>/dev/null || true)
+    # If the dry run fails, the pending migrations are unknown: the guard
+    # cannot decide, so the setup stops instead of running them blind.
+    if ! pending=$(php artisan migrate --pretend --no-ansi 2>/dev/null); then
+        log_error "Cannot read the pending migrations (migrate --pretend failed)"
+        exit 5
+    fi
     if ! assert_no_destructive_migration "$pending"; then
         exit 5
     fi

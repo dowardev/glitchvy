@@ -15,37 +15,28 @@ set -euo pipefail
 CURRENT_TAG="${1:-${CI_COMMIT_TAG:-}}"
 
 if [[ ! "$CURRENT_TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-.*)?$ ]]; then
-    echo "The current tag '$CURRENT_TAG' is not a semantic version tag (expected vMAJOR.MINOR.PATCH)." >&2
+    echo "The current tag '$CURRENT_TAG' is not a semantic version tag (expected vMAJOR.MINOR.PATCH, with an optional prerelease suffix)." >&2
     exit 1
 fi
 
 PREVIOUS_TAG=$(git tag --list "v*" \
     | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
     | awk -v cur="$CURRENT_TAG" '
-        # Splits vMAJOR.MINOR.PATCH into its three numeric components.
-        function parts(v,   p) {
-            sub(/^v/, "", v); split(v, p, ".");
-            component[1] = p[1] + 0; component[2] = p[2] + 0; component[3] = p[3] + 0
-        }
-        # -1 when a is older than b, 0 when they are the same, 1 when a is newer.
-        function compare(a, b,   i) {
+        # -1 when a is older than b, 0 when they are the same, 1 when a is
+        # newer. It compares the three numeric components one by one, so
+        # no component has an upper bound.
+        function compare(a, b,   x, y, i) {
+            split(a, x, "."); split(b, y, ".");
+            sub(/^v/, "", x[1]); sub(/^v/, "", y[1]);
             for (i = 1; i <= 3; i++) {
-                if (a[i] < b[i]) return -1;
-                if (a[i] > b[i]) return 1;
+                if ((x[i] + 0) < (y[i] + 0)) return -1;
+                if ((x[i] + 0) > (y[i] + 0)) return 1;
             }
             return 0
         }
-        BEGIN {
-            parts(cur);
-            for (i = 1; i <= 3; i++) current[i] = component[i]
-            best = ""
-        }
+        BEGIN { current = cur }
         {
-            parts($0);
-            if (compare(component, current) < 0 && (best == "" || compare(component, best_version) > 0)) {
-                best = $0;
-                for (i = 1; i <= 3; i++) best_version[i] = component[i]
-            }
+            if (compare($0, current) < 0 && (best == "" || compare($0, best) > 0)) best = $0
         }
         END { print best }')
 

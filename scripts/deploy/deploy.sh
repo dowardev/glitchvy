@@ -9,6 +9,9 @@
 #   ./scripts/deploy/deploy.sh --frontend # only the admin SPA
 #   ./scripts/deploy/deploy.sh --all      # both (explicit)
 #   ./scripts/deploy/deploy.sh --tag v1.2.3   # checkout the tag first, then deploy
+# Exit codes: 0 success, 2 missing prerequisite, 3 a pre-deploy check failed,
+# 4 the deploy command failed on the server, 5 the local command failed.
+#
 #   ./scripts/deploy/deploy.sh --skip-checks  # skip the checks (faster, use with caution)
 #   ./scripts/deploy/deploy.sh --migrate     # also run the pending migrations (opt-in)
 #   ./scripts/deploy/deploy.sh --dry-run      # print the commands without running scp/ssh
@@ -210,9 +213,9 @@ esac
 validate_private_key() {
     local key_file="$1"
     if ! command -v ssh-keygen >/dev/null 2>&1; then
-        # Returning success here would be a false sense of validation: the
-        # key would only fail later at connection time with an opaque error.
-        # Opt out explicitly if the machine really has no ssh-keygen.
+        # Without ssh-keygen the key format cannot be checked: the key
+        # would only fail later at connection time with an opaque error.
+        # The operator can accept that risk explicitly.
         if [[ "${ALLOW_UNVALIDATED_SSH_KEY:-}" == "1" ]]; then
             log_warn "ssh-keygen not found — the private key format is NOT validated (ALLOW_UNVALIDATED_SSH_KEY=1)"
             return 0
@@ -390,6 +393,11 @@ create_tarball() {
     fi
 }
 
+# The shared hosting drops connections from time to time: a failed
+# command is retried once before the deploy gives up.
+RETRY_ATTEMPTS="${RETRY_ATTEMPTS:-2}"
+RETRY_DELAY_SECONDS="${RETRY_DELAY_SECONDS:-5}"
+
 run_cmd() {
   local desc="$1"
   shift
@@ -403,17 +411,24 @@ run_cmd() {
     return 0
   fi
 
-  # The command string comes from the deploy config (operator controlled),
-  # but it is executed in its own shell instead of with eval, so the
-  # current shell can never be re-defined by it.
-  if ( bash -c "$cmd" ); then
-    log_info "✓ $desc completed"
-    return 0
-  else
-    local exit_code=$?
-    log_err "✗ $desc failed (exit $exit_code)"
-    return $exit_code
-  fi
+  local attempt=1 exit_code=0
+  while true; do
+    # The command string comes from the deploy config (operator
+    # controlled), but it is executed in its own shell instead of with
+    # eval, so the current shell can never be re-defined by it.
+    if ( bash -c "$cmd" ); then
+      log_info "✓ $desc completed"
+      return 0
+    fi
+    exit_code=$?
+    if [ "$attempt" -ge "$RETRY_ATTEMPTS" ]; then
+      log_err "✗ $desc failed (exit $exit_code)"
+      return $exit_code
+    fi
+    log_warn "✗ $desc failed (exit $exit_code) — retrying in ${RETRY_DELAY_SECONDS}s (attempt $((attempt + 1))/$RETRY_ATTEMPTS)"
+    attempt=$((attempt + 1))
+    sleep "$RETRY_DELAY_SECONDS"
+  done
 }
 
 run_remote() {
@@ -428,14 +443,21 @@ run_remote() {
     return 0
   fi
 
-  if ssh "${SSH_OPTS[@]}" "$SSH_USER@$SSH_HOST" "$remote_cmd"; then
-    log_info "✓ $desc completed"
-    return 0
-  else
-    local exit_code=$?
-    log_err "✗ $desc failed (exit $exit_code)"
-    return $exit_code
-  fi
+  local attempt=1 exit_code=0
+  while true; do
+    if ssh "${SSH_OPTS[@]}" "$SSH_USER@$SSH_HOST" "$remote_cmd"; then
+      log_info "✓ $desc completed"
+      return 0
+    fi
+    exit_code=$?
+    if [ "$attempt" -ge "$RETRY_ATTEMPTS" ]; then
+      log_err "✗ $desc failed (exit $exit_code)"
+      return $exit_code
+    fi
+    log_warn "✗ $desc failed (exit $exit_code) — retrying in ${RETRY_DELAY_SECONDS}s (attempt $((attempt + 1))/$RETRY_ATTEMPTS)"
+    attempt=$((attempt + 1))
+    sleep "$RETRY_DELAY_SECONDS"
+  done
 }
 
 # Ensure pnpm is available without re-running the global corepack mutation every deploy.
@@ -765,8 +787,11 @@ run_migrations() {
   remote_cmd=$(cat <<EOF
 set -e
 cd "${DEPLOY_PATH_BACKEND}"
-PENDING=\$(php artisan migrate --pretend --no-ansi 2>/dev/null || true)
-if echo "\$PENDING" | grep -qiE 'drop table|drop column|truncate|rename column'; then
+PENDING=\$(php artisan migrate --pretend --no-ansi 2>/dev/null) || {
+  echo "Cannot read the pending migrations (migrate --pretend failed)." >&2
+  exit 1
+}
+if echo "\$PENDING" | grep -qiE 'drop table|drop column|drop index|drop constraint|drop foreign key|truncate|rename column|rename table'; then
   if [ "\${ALLOW_DESTRUCTIVE_MIGRATIONS:-}" != "1" ]; then
     echo "Destructive migration detected. Review it, then re-run with ALLOW_DESTRUCTIVE_MIGRATIONS=1 to apply it." >&2
     exit 1

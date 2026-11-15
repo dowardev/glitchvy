@@ -274,9 +274,12 @@ Install pnpm with npm instead: `npm i -g pnpm@11.3.0`.
 ---
 
 If the machine has no `ssh-keygen` (the OpenSSH client), the deploy
-refuses to run: it cannot validate the private key, and an unvalidated key
-would only fail later at connection time. Set `ALLOW_UNVALIDATED_SSH_KEY=1`
-to deploy anyway, knowing that the key format was not checked.
+refuses to run: it cannot validate the private key. The risk of the escape
+hatch is concrete: a key that is truncated, mis-formatted or still
+encrypted with a passphrase fails at connection time with an opaque error,
+and the deploy stops there instead of failing fast at the key check. Set
+`ALLOW_UNVALIDATED_SSH_KEY=1` only when the key comes from a source you
+trust, and check the first connection by hand.
 
 ## 8. Tests
 
