@@ -143,12 +143,14 @@ sed_set() {
     # A newline cannot be represented in a .env file: the value would break
     # the file into two lines and the rest of it would be parsed as a
     # different variable. Refuse it instead of writing a broken .env.
+    #
+    # The helper returns an error code instead of aborting the script: a
+    # helper that calls exit only ends the subshell it runs in. The caller
+    # decides what to do, and every caller turns it into the documented
+    # exit code (7 for an invalid value, 6 for a write failure).
     if [[ "$val" == *$'\n'* || "$val" == *$'\r'* ]]; then
         log_error "Refusing to write '$key': the value contains a newline"
-        # The value cannot be represented in an env file. Abort here, so
-        # every caller stops with the same documented exit code instead of
-        # continuing with a half-written file.
-        exit 7
+        return 7
     fi
     local escaped_val="$val"
     local needs_quoting=false
@@ -163,10 +165,17 @@ sed_set() {
         escaped_val="\"${escaped_val}\""
     fi
     if grep -qE "^\s*${key}=" "$file" 2>/dev/null; then
-        sed -i "s|^[[:space:]]*${key}=.*|${key}=${escaped_val}|" "$file"
+        if ! sed -i "s|^[[:space:]]*${key}=.*|${key}=${escaped_val}|" "$file"; then
+            log_error "Cannot write '$key' to $file (write permission error?)"
+            return 6
+        fi
     else
-        echo "${key}=${escaped_val}" >> "$file"
+        if ! printf '%s\n' "${key}=${escaped_val}" >> "$file"; then
+            log_error "Cannot write '$key' to $file (write permission error?)"
+            return 6
+        fi
     fi
+    return 0
 }
 
 normalize_url() {
@@ -392,22 +401,19 @@ configure_backend() {
         default_db_connection="${prev_db_connection:-sqlite}"
 
         app_name="$(ask "App name" "$default_app_name")"
-        sed_set ".env" "APP_NAME" "$app_name"
-
+        sed_set ".env" "APP_NAME" "$app_name" || exit $?
         while :; do
             app_url="$(ask "App URL (backend)" "$default_app_url")"
             app_url="$(normalize_url "$app_url")" && break
             log_error "URL cannot be empty. Enter something like http://localhost:8000"
         done
-        sed_set ".env" "APP_URL" "$app_url"
-
+        sed_set ".env" "APP_URL" "$app_url" || exit $?
         while :; do
             frontend_url="$(ask "Admin SPA URL (frontend)" "$default_frontend_url")"
             frontend_url="$(normalize_url "$frontend_url")" && break
             log_error "URL cannot be empty. Enter something like http://localhost:8100"
         done
-        sed_set ".env" "FRONTEND_URL" "$frontend_url"
-
+        sed_set ".env" "FRONTEND_URL" "$frontend_url" || exit $?
         if [ "$DEV_MODE" = true ]; then
             app_env="local"
             app_debug="true"
@@ -471,46 +477,45 @@ configure_backend() {
     sanctum_stateful_domains="$(echo "$frontend_url" | sed -E 's|^https?://||; s|/.*$||')"
     cors_allowed_origins="$frontend_url"
 
-    sed_set ".env" "APP_NAME" "$app_name"
-    sed_set ".env" "APP_ENV" "$app_env"
-    sed_set ".env" "APP_DEBUG" "$app_debug"
-    sed_set ".env" "APP_URL" "$app_url"
-    sed_set ".env" "FRONTEND_URL" "$frontend_url"
-    sed_set ".env" "SANCTUM_STATEFUL_DOMAINS" "$sanctum_stateful_domains"
-    sed_set ".env" "CORS_ALLOWED_ORIGINS" "$cors_allowed_origins"
-    sed_set ".env" "DB_CONNECTION" "$db_connection"
+    sed_set ".env" "APP_NAME" "$app_name" || exit $?
+    sed_set ".env" "APP_ENV" "$app_env" || exit $?
+    sed_set ".env" "APP_DEBUG" "$app_debug" || exit $?
+    sed_set ".env" "APP_URL" "$app_url" || exit $?
+    sed_set ".env" "FRONTEND_URL" "$frontend_url" || exit $?
+    sed_set ".env" "SANCTUM_STATEFUL_DOMAINS" "$sanctum_stateful_domains" || exit $?
+    sed_set ".env" "CORS_ALLOWED_ORIGINS" "$cors_allowed_origins" || exit $?
+    sed_set ".env" "DB_CONNECTION" "$db_connection" || exit $?
     if [ "$db_connection" = "mysql" ]; then
-        sed_set ".env" "DB_HOST" "$db_host"
-        sed_set ".env" "DB_PORT" "$db_port"
-        sed_set ".env" "DB_DATABASE" "$db_database"
-        sed_set ".env" "DB_USERNAME" "$db_username"
-        sed_set ".env" "DB_PASSWORD" "$db_password"
+        sed_set ".env" "DB_HOST" "$db_host" || exit $?
+        sed_set ".env" "DB_PORT" "$db_port" || exit $?
+        sed_set ".env" "DB_DATABASE" "$db_database" || exit $?
+        sed_set ".env" "DB_USERNAME" "$db_username" || exit $?
+        sed_set ".env" "DB_PASSWORD" "$db_password" || exit $?
     else
-        sed_set ".env" "DB_DATABASE" "$db_database"
+        sed_set ".env" "DB_DATABASE" "$db_database" || exit $?
     fi
-    sed_set ".env" "MAIL_MAILER" "$mail_mailer"
-    sed_set ".env" "MAIL_HOST" "$mail_host"
-    sed_set ".env" "MAIL_PORT" "$mail_port"
-    sed_set ".env" "MAIL_USERNAME" "$mail_username"
-    sed_set ".env" "MAIL_PASSWORD" "$mail_password"
-    sed_set ".env" "MAIL_FROM_ADDRESS" "$mail_from_address"
-    sed_set ".env" "GLITCHVY_RETENTION_DAYS" "$retention_days"
-    sed_set ".env" "GLITCHVY_STORAGE_DISK" "$storage_disk"
-    sed_set ".env" "GLITCHVY_RATE_LIMIT" "$rate_limit"
-
-    # SSO integration (planned, tracked in odd/tasks/deploy-tooling.md L13):
+    sed_set ".env" "MAIL_MAILER" "$mail_mailer" || exit $?
+    sed_set ".env" "MAIL_HOST" "$mail_host" || exit $?
+    sed_set ".env" "MAIL_PORT" "$mail_port" || exit $?
+    sed_set ".env" "MAIL_USERNAME" "$mail_username" || exit $?
+    sed_set ".env" "MAIL_PASSWORD" "$mail_password" || exit $?
+    sed_set ".env" "MAIL_FROM_ADDRESS" "$mail_from_address" || exit $?
+    sed_set ".env" "GLITCHVY_RETENTION_DAYS" "$retention_days" || exit $?
+    sed_set ".env" "GLITCHVY_STORAGE_DISK" "$storage_disk" || exit $?
+    sed_set ".env" "GLITCHVY_RATE_LIMIT" "$rate_limit" || exit $?
+    # SSO integration (planned, tracked in odd/tasks/deploy-tooling.md):
     # the deploy can carry the SSO credentials so
     # the server env file is ready when the server-side SSO client lands.
     # They are written only when the operator provides them, so nothing
     # unused ends up in the file.
     if [ -n "${GLITCHVY_SSO_URL:-}" ]; then
-        sed_set ".env" "SSO_URL" "$GLITCHVY_SSO_URL"
+        sed_set ".env" "SSO_URL" "$GLITCHVY_SSO_URL" || exit $?
     fi
     if [ -n "${GLITCHVY_SSO_CLIENT_ID:-}" ]; then
-        sed_set ".env" "SSO_CLIENT_ID" "$GLITCHVY_SSO_CLIENT_ID"
+        sed_set ".env" "SSO_CLIENT_ID" "$GLITCHVY_SSO_CLIENT_ID" || exit $?
     fi
     if [ -n "${GLITCHVY_SSO_CLIENT_SECRET:-}" ]; then
-        sed_set ".env" "SSO_CLIENT_SECRET" "$GLITCHVY_SSO_CLIENT_SECRET"
+        sed_set ".env" "SSO_CLIENT_SECRET" "$GLITCHVY_SSO_CLIENT_SECRET" || exit $?
     fi
 
     verify_db_connection "$db_connection"
@@ -629,7 +634,9 @@ generate_app_key() {
 # operator opts in explicitly with ALLOW_DESTRUCTIVE_MIGRATIONS=1.
 assert_no_destructive_migration() {
     local pending="$1"
-    if ! printf '%s' "$pending" | grep -qiE 'drop table|drop column|truncate|rename column'; then
+    # The operations that can lose data or break the schema.
+    local destructive_operations='drop table|drop column|drop index|drop constraint|drop foreign key|truncate|rename column|rename table'
+    if ! printf '%s' "$pending" | grep -qiE "$destructive_operations"; then
         return 0
     fi
     if [ "${ALLOW_DESTRUCTIVE_MIGRATIONS:-}" != "1" ]; then
@@ -784,18 +791,17 @@ configure_frontend() {
 
     local api_url csp_src
     api_url="$(ask "VITE_GLITCHVY_API_URL" "${prev_api_url:-/api}")"
-    sed_set "$target_file" "VITE_GLITCHVY_API_URL" "$api_url"
+    sed_set "$target_file" "VITE_GLITCHVY_API_URL" "$api_url" || exit $?
     csp_src="$(ask "VITE_GLITCHVY_CSP_CONNECT_SRC" "${prev_csp_src:-'self'}")"
-    sed_set "$target_file" "VITE_GLITCHVY_CSP_CONNECT_SRC" "$csp_src"
-
-    # SSO integration (planned, tracked in odd/tasks/deploy-tooling.md L13):
+    sed_set "$target_file" "VITE_GLITCHVY_CSP_CONNECT_SRC" "$csp_src" || exit $?
+    # SSO integration (planned, tracked in odd/tasks/deploy-tooling.md):
     # the SPA bakes these at build time, so they
     # are written only when the operator provides them.
     if [ -n "${GLITCHVY_SSO_URL:-}" ]; then
-        sed_set "$target_file" "VITE_SSO_URL" "$GLITCHVY_SSO_URL" || exit 3
+        sed_set "$target_file" "VITE_SSO_URL" "$GLITCHVY_SSO_URL" || exit $?
     fi
     if [ -n "${GLITCHVY_SSO_CLIENT_ID:-}" ]; then
-        sed_set "$target_file" "VITE_SSO_CLIENT_ID" "$GLITCHVY_SSO_CLIENT_ID" || exit 3
+        sed_set "$target_file" "VITE_SSO_CLIENT_ID" "$GLITCHVY_SSO_CLIENT_ID" || exit $?
     fi
 
     log_ok "Admin SPA configured ($target_file)"

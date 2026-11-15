@@ -178,6 +178,10 @@ Required GitLab CI/CD variables (Settings → CI/CD → Variables):
 
 From CI: run the `rollback_backend` / `rollback_frontend` job of the tag pipeline. Both roll back to the newest **stable** release older than the tag being deployed, selected by `scripts/ci/previous-tag.sh` (prereleases and malformed tags never qualify, and a tag that is not a semver fails with a clear message).
 
+If the automatic selection cannot find a candidate (for example the tags
+were not fetched), set the `ROLLBACK_TO_TAG` CI/CD variable to the release
+you want to restore and run the job again.
+
 From your machine:
 
 ```bash
@@ -268,6 +272,11 @@ The artifact excludes every `.env*` file. If a real `.env` reaches the server, r
 Install pnpm with npm instead: `npm i -g pnpm@11.3.0`.
 
 ---
+
+If the machine has no `ssh-keygen` (the OpenSSH client), the deploy
+refuses to run: it cannot validate the private key, and an unvalidated key
+would only fail later at connection time. Set `ALLOW_UNVALIDATED_SSH_KEY=1`
+to deploy anyway, knowing that the key format was not checked.
 
 ## 8. Tests
 

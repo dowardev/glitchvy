@@ -45,10 +45,17 @@ section() {
 # the logging helpers stubbed out.
 load_function() {
     local script="$1" name="$2" target="$3"
+    # The brace depth is counted, so a function with braces inside
+    # strings, comments or heredocs is extracted whole.
     awk -v name="$name" '
-        $0 ~ "^" name "\\(\\) \\{" { inside = 1 }
-        inside { print }
-        inside && $0 ~ "^\\}" { exit }
+        !inside && $0 ~ "^" name "\\(\\)[[:space:]]*\\{" { inside = 1; depth = 0 }
+        inside {
+            print
+            opens = gsub(/\{/, "", $0)
+            closes = gsub(/\}/, "", $0)
+            depth += opens - closes
+            if (depth <= 0) { inside = 0; exit }
+        }
     ' "$script" > "$target"
 }
 
@@ -102,11 +109,12 @@ else
     fail "rejects a tag that is not a semantic version" "got: $output"
 fi
 
-output="$(cd "$repo" && bash "$PREVIOUS_TAG_SCRIPT" v1.1000.0 2>&1)"
-if [ $? -ne 0 ] && printf '%s' "$output" | grep -qi "must stay below 1000"; then
-    pass "rejects a version component that the encoding cannot represent"
+new_repo_with_tags "$repo" v1.1000.0 v10.0.0
+selected="$(cd "$repo" && bash "$PREVIOUS_TAG_SCRIPT" v1.1000.0)"
+if [ "$selected" = "v1.10.0" ]; then
+    pass "compares version components without an upper bound"
 else
-    fail "rejects a version component that the encoding cannot represent" "got: $output"
+    fail "compares version components without an upper bound" "got '$selected', expected 'v1.10.0'"
 fi
 
 # ============================================================
@@ -131,21 +139,47 @@ else
     fail "writes a valid value into the env file" "content: $(cat "$env_file")"
 fi
 
-# A newline cannot be represented in an env file: the writer has to abort
-# with the documented exit code and leave the file untouched.
+# A newline cannot be represented in an env file: the writer has to refuse
+# it, report it with its own exit code and leave the file untouched.
 ( source "$env_dir/sed_set.sh"
   sed_set "$env_file" "SSO_CLIENT_ID" "$(printf 'client\nINJECTED=1')" ) >/dev/null 2>&1
 status=$?
 if [ "$status" -eq 7 ]; then
-    pass "refuses a value with a newline and exits with code 7"
+    pass "refuses a value with a newline and returns the code 7"
 else
-    fail "refuses a value with a newline and exits with code 7" "exit code was $status"
+    fail "refuses a value with a newline and returns the code 7" "exit code was $status"
 fi
 
 if grep -q 'INJECTED=1' "$env_file"; then
     fail "leaves the env file untouched when a value is refused" "the file was modified"
 else
     pass "leaves the env file untouched when a value is refused"
+fi
+
+# The caller turns that code into the documented exit code of the script.
+( source "$env_dir/sed_set.sh"
+  sed_set "$env_file" "SSO_CLIENT_ID" "$(printf 'client\nINJECTED=1')" || exit $? ) >/dev/null 2>&1
+status=$?
+if [ "$status" -eq 7 ]; then
+    pass "the caller aborts with the code the writer returned"
+else
+    fail "the caller aborts with the code the writer returned" "exit code was $status"
+fi
+
+# A file that cannot be written is a different failure: the write
+# permission error (6), not the invalid value (7).
+locked_dir="$(mktemp -d)"
+locked_file="$locked_dir/locked.env"
+printf 'EXISTING=value\n' > "$locked_file"
+chmod 400 "$locked_dir"
+( source "$env_dir/sed_set.sh"
+  sed_set "$locked_file" "APP_NAME" "Glitchvy" ) >/dev/null 2>&1
+status=$?
+chmod 700 "$locked_dir"
+if [ "$status" -eq 6 ]; then
+    pass "reports a write permission error with the code 6"
+else
+    fail "reports a write permission error with the code 6" "exit code was $status"
 fi
 
 # ============================================================

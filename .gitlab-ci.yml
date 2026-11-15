@@ -182,6 +182,9 @@ build:packages:
     - apk add --no-cache openssh-client
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
     - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa
+    # A malformed key fails here, with a clear message, instead of at the
+    # first connection with an opaque error.
+    - ssh-keygen -y -f ~/.ssh/id_rsa > /dev/null
     - echo "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
     - eval $(ssh-agent -s) && ssh-add ~/.ssh/id_rsa
 
@@ -262,6 +265,9 @@ frontend_deploy:
     - apk add --no-cache openssh-client
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
     - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa
+    # A malformed key fails here, with a clear message, instead of at the
+    # first connection with an opaque error.
+    - ssh-keygen -y -f ~/.ssh/id_rsa > /dev/null
     - echo "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
     - eval $(ssh-agent -s) && ssh-add ~/.ssh/id_rsa
     - corepack enable
@@ -291,7 +297,9 @@ rollback_backend:
       # The newest stable release older than the tag being deployed. The
       # selection lives in one script so both rollback jobs agree on it.
       git fetch --tags
-      PREVIOUS_TAG=$(scripts/ci/previous-tag.sh "$CI_COMMIT_TAG")
+      # A manual override lets an operator pick the target during an
+      # incident, when the automatic selection cannot find a candidate.
+      PREVIOUS_TAG="${ROLLBACK_TO_TAG:-$(scripts/ci/previous-tag.sh "$CI_COMMIT_TAG")}"
       echo "Rolling back to $PREVIOUS_TAG"
       git checkout "$PREVIOUS_TAG" -- back/
       tar -czf /tmp/backend-rollback.tar.gz \
@@ -331,6 +339,9 @@ rollback_frontend:
     - apk add --no-cache openssh-client git
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
     - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa
+    # A malformed key fails here, with a clear message, instead of at the
+    # first connection with an opaque error.
+    - ssh-keygen -y -f ~/.ssh/id_rsa > /dev/null
     - echo "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
     - eval $(ssh-agent -s) && ssh-add ~/.ssh/id_rsa
     - corepack enable
@@ -339,7 +350,9 @@ rollback_frontend:
       # The newest stable release older than the tag being deployed. The
       # selection lives in one script so both rollback jobs agree on it.
       git fetch --tags
-      PREVIOUS_TAG=$(scripts/ci/previous-tag.sh "$CI_COMMIT_TAG")
+      # A manual override lets an operator pick the target during an
+      # incident, when the automatic selection cannot find a candidate.
+      PREVIOUS_TAG="${ROLLBACK_TO_TAG:-$(scripts/ci/previous-tag.sh "$CI_COMMIT_TAG")}"
       echo "Rolling back to $PREVIOUS_TAG"
       git checkout "$PREVIOUS_TAG" -- front/
       pnpm install --frozen-lockfile

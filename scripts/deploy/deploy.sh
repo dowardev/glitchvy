@@ -235,10 +235,13 @@ validate_private_key() {
 setup_ssh() {
   local ssh_dir="$HOME/.ssh"
 
+  # One definition for every branch below: the connection timeout and the
+  # keepalives keep a shared-hosting connection from hanging forever.
+  SSH_OPTS=(-p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
+  SCP_OPTS=(-P "$SSH_PORT" -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
+
   if [[ "$DRY_RUN" == "true" ]]; then
     log_debug "SKIP setup_ssh (dry-run) — no ~/.ssh writes"
-    SSH_OPTS=(-p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
-    SCP_OPTS=(-P "$SSH_PORT" -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
     return 0
   fi
 
@@ -305,8 +308,6 @@ SSH_CONFIG
     # and losing its loaded keys. ssh falls back to the default identity
     # file ~/.ssh/id_rsa automatically.
     unset SSH_AUTH_SOCK SSH_AGENT_PID 2>/dev/null || true
-    SSH_OPTS=(-p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
-    SCP_OPTS=(-P "$SSH_PORT" -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
   elif [[ "$USE_KEY_FILE" == "true" ]]; then
     eval "$(ssh-agent -s)" >/dev/null
     if [[ "$KEY_SOURCE" == "SSH_PRIVATE_KEY" ]]; then
@@ -315,11 +316,7 @@ SSH_CONFIG
       ssh-add "$SSH_PRIVATE_KEY_PATH" 2>/dev/null
     fi
     export SSH_AUTH_SOCK SSH_AGENT_PID
-    SSH_OPTS=(-p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
-    SCP_OPTS=(-P "$SSH_PORT" -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
   else
-    SSH_OPTS=(-p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
-    SCP_OPTS=(-P "$SSH_PORT" -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
     export SSH_AUTH_SOCK SSH_AGENT_PID
   fi
 
