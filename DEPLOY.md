@@ -58,6 +58,10 @@ On your **machine**:
 
 `setup.sh` is uploaded by the deploy script, but it is **never executed automatically**: it prompts for secrets (database password, admin password).
 
+The environment file it writes on the server (database password, `APP_KEY`, mail credentials) and its
+backups are restricted to the owner (`chmod 600`). The host is shared, and with the default
+permissions the file would be readable by any other user of the machine.
+
 ```bash
 ssh -p 65002 u902881280@195.179.236.189
 cd /home/u902881280/public_html/glitchvy
@@ -166,11 +170,15 @@ Required GitLab CI/CD variables (Settings → CI/CD → Variables):
 | `SSH_HOST` | `195.179.236.189` |
 | `SSH_PORT` | `65002` |
 | `SSH_USER` | `u902881280` |
-| `SSH_PRIVATE_KEY` | the private key content |
+| `SSH_PRIVATE_KEY` | the private key content, or the path to a file with it (a file variable) |
 | `SSH_KNOWN_HOSTS` | the `known_hosts` line |
 | `DEPLOY_PATH_BACKEND` | `/home/u902881280/public_html/glitchvy/back` |
 | `DEPLOY_PATH_FRONTEND` | `/home/u902881280/public_html/glitchvy` |
 | `ALLOW_DESTRUCTIVE_MIGRATIONS` | optional: `1` lets the manual `backend_migrate` job apply a destructive migration |
+
+The private key is accepted in both shapes: the content of the variable, or the path to a file
+that holds it (a GitLab file variable). An empty or invalid key fails the job with an explicit
+message, instead of installing a broken key that fails later at the first connection.
 
 ---
 

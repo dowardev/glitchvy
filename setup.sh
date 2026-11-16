@@ -138,6 +138,21 @@ backup_file() {
     fi
 }
 
+# The backend environment file holds the database password, the application
+# key, the mail credentials and the SSO client secret. The default umask
+# would leave it readable by every other user of the shared host, so the
+# file and its backups are restricted to their owner.
+restrict_env_permissions() {
+    local path="$1"
+    [ -f "$path" ] || return 0
+    chmod 600 "$path" || return 1
+    local backup
+    for backup in "${path}".bak.*; do
+        [ -f "$backup" ] && chmod 600 "$backup"
+    done
+    return 0
+}
+
 # The exit codes of this script (see usage()).
 readonly EXIT_WRITE_ERROR=6
 readonly EXIT_INVALID_VALUE=7
@@ -357,6 +372,7 @@ configure_backend() {
     backup_file ".env"
     if [ ! -f ".env" ]; then
         cp "$example_file" ".env"
+        restrict_env_permissions ".env" || exit $?
     fi
 
     local app_name app_url frontend_url app_env app_debug
@@ -522,6 +538,7 @@ configure_backend() {
         sed_set ".env" "SSO_CLIENT_SECRET" "$GLITCHVY_SSO_CLIENT_SECRET" || exit $?
     fi
 
+    restrict_env_permissions ".env" || exit $?
     verify_db_connection "$db_connection"
     log_ok "Backend configured"
     cd "$SCRIPT_DIR"

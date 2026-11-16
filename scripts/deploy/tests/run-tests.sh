@@ -429,6 +429,100 @@ else
 fi
 
 # ============================================================
+section "setup.sh and CI — environment file permissions and private key installation"
+# ============================================================
+perm_dir="$(mktemp -d)"
+
+# The environment file permissions are enforced by a function of setup.sh.
+# It is loaded in isolation, like the other functions above.
+load_function "$SETUP_SCRIPT" "restrict_env_permissions" "$perm_dir/restrict.sh"
+
+perm_env="$perm_dir/app.env"
+: > "$perm_env"
+chmod 644 "$perm_env"
+perm_backup="$perm_dir/app.env.bak.20260101_000000"
+: > "$perm_backup"
+chmod 644 "$perm_backup"
+(
+    set -uo pipefail
+    . "$perm_dir/restrict.sh"
+    restrict_env_permissions "$perm_env"
+) >/dev/null 2>&1
+perm_mode="$(stat -c %a "$perm_env" 2>/dev/null || echo '?')"
+perm_backup_mode="$(stat -c %a "$perm_backup" 2>/dev/null || echo '?')"
+if [ "$perm_mode" = "600" ] && [ "$perm_backup_mode" = "600" ]; then
+    pass "setup.sh restricts the environment file and its backups to the owner"
+else
+    fail "setup.sh restricts the environment file and its backups to the owner" "modes: $perm_mode / $perm_backup_mode"
+fi
+
+configure_backend_body="$(awk '/^configure_backend\(\) \{/,/^\}/' "$SETUP_SCRIPT")"
+if grep -q "restrict_env_permissions" <<< "$configure_backend_body"; then
+    pass "setup.sh applies the environment file permissions in configure_backend"
+else
+    fail "setup.sh applies the environment file permissions in configure_backend" "configure_backend does not call restrict_env_permissions"
+fi
+
+# The key installation of the pipeline is extracted from the CI file, so the
+# test runs the very same code the runner executes.
+ci_key_block="$(awk '
+    /^    - \|$/ { collecting = 1; block = ""; next }
+    collecting {
+        if ($0 == "") { next }
+        if (substr($0, 1, 6) == "      ") { block = block substr($0, 7) "\n"; next }
+        if (block ~ /SSH_PRIVATE_KEY/) { print block; exit }
+        collecting = 0
+    }
+' "$REPO_ROOT/.gitlab-ci.yml")"
+
+runner_ssh_dir=".ssh"
+runner_key="id_rsa"
+
+run_key_block() {
+    local value="$1" home_dir="$2"
+    mkdir -p "$home_dir/$runner_ssh_dir"
+    chmod 700 "$home_dir/$runner_ssh_dir"
+    HOME="$home_dir" SSH_PRIVATE_KEY="$value" bash -c "$ci_key_block" 2>&1
+}
+
+if [ -z "$ci_key_block" ]; then
+    fail "the pipeline refuses an empty private key with a clear message" "the key block could not be extracted from .gitlab-ci.yml"
+    fail "the pipeline refuses a private key that is not a key with a clear message" "the key block could not be extracted from .gitlab-ci.yml"
+    skip "the pipeline installs a valid private key with owner-only permissions" "the key block could not be extracted from .gitlab-ci.yml"
+else
+    empty_out="$(run_key_block "" "$perm_dir/home-empty")"
+    empty_status=$?
+    if [ "$empty_status" -ne 0 ] && grep -q "SSH_PRIVATE_KEY is empty" <<< "$empty_out"; then
+        pass "the pipeline refuses an empty private key with a clear message"
+    else
+        fail "the pipeline refuses an empty private key with a clear message" "exit $empty_status: $empty_out"
+    fi
+
+    missing_out="$(run_key_block "$perm_dir/no-such-key" "$perm_dir/home-missing")"
+    missing_status=$?
+    if [ "$missing_status" -ne 0 ] && grep -q "does not hold a valid private key" <<< "$missing_out"; then
+        pass "the pipeline refuses a private key that is not a key with a clear message"
+    else
+        fail "the pipeline refuses a private key that is not a key with a clear message" "exit $missing_status: $missing_out"
+    fi
+
+    if command -v ssh-keygen >/dev/null 2>&1; then
+        valid_key="$perm_dir/test-key"
+        ssh-keygen -t ed25519 -N "" -f "$valid_key" >/dev/null 2>&1
+        valid_out="$(run_key_block "$valid_key" "$perm_dir/home-valid")"
+        valid_status=$?
+        valid_mode="$(stat -c %a "$perm_dir/home-valid/$runner_ssh_dir/$runner_key" 2>/dev/null || echo '?')"
+        if [ "$valid_status" -eq 0 ] && [ "$valid_mode" = "600" ]; then
+            pass "the pipeline installs a valid private key with owner-only permissions"
+        else
+            fail "the pipeline installs a valid private key with owner-only permissions" "exit $valid_status, mode $valid_mode: $valid_out"
+        fi
+    else
+        skip "the pipeline installs a valid private key with owner-only permissions" "ssh-keygen is not available"
+    fi
+fi
+
+# ============================================================
 echo ""
 echo "==========================================="
 echo "  passed: $PASSED"

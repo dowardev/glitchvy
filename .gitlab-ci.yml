@@ -130,7 +130,7 @@ test:deploy-tooling:
   image: bash:5.2
   needs: []
   before_script:
-    - apt-get update && apt-get install -y --no-install-recommends git
+    - apt-get update && apt-get install -y --no-install-recommends git openssh-client
     - git config --global user.email "ci@glitchvy.test"
     - git config --global user.name "CI"
   script:
@@ -184,15 +184,22 @@ build:packages:
     - |
       # The variable holds the key content, or the path to a file with it
       # (a GitLab file variable). Both shapes are accepted.
+      if [ -z "$SSH_PRIVATE_KEY" ]; then
+        echo "SSH_PRIVATE_KEY is empty: it must hold the key content or the path to a file with it" >&2
+        exit 1
+      fi
       if [ -f "$SSH_PRIVATE_KEY" ]; then
         cp "$SSH_PRIVATE_KEY" ~/.ssh/id_rsa
       else
         printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
       fi
       chmod 600 ~/.ssh/id_rsa
-    # A malformed key fails here, with a clear message, instead of at the
-    # first connection with an opaque error.
-    - ssh-keygen -y -f ~/.ssh/id_rsa > /dev/null
+      # A malformed key fails here, with a clear message, instead of at the
+      # first connection with an opaque error.
+      if ! ssh-keygen -y -f ~/.ssh/id_rsa > /dev/null 2>&1; then
+        echo "SSH_PRIVATE_KEY does not hold a valid private key: it must hold the key content, or the path to an existing file with it" >&2
+        exit 1
+      fi
     - echo "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
     - eval $(ssh-agent -s) && ssh-add ~/.ssh/id_rsa
 
@@ -275,15 +282,22 @@ frontend_deploy:
     - |
       # The variable holds the key content, or the path to a file with it
       # (a GitLab file variable). Both shapes are accepted.
+      if [ -z "$SSH_PRIVATE_KEY" ]; then
+        echo "SSH_PRIVATE_KEY is empty: it must hold the key content or the path to a file with it" >&2
+        exit 1
+      fi
       if [ -f "$SSH_PRIVATE_KEY" ]; then
         cp "$SSH_PRIVATE_KEY" ~/.ssh/id_rsa
       else
         printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
       fi
       chmod 600 ~/.ssh/id_rsa
-    # A malformed key fails here, with a clear message, instead of at the
-    # first connection with an opaque error.
-    - ssh-keygen -y -f ~/.ssh/id_rsa > /dev/null
+      # A malformed key fails here, with a clear message, instead of at the
+      # first connection with an opaque error.
+      if ! ssh-keygen -y -f ~/.ssh/id_rsa > /dev/null 2>&1; then
+        echo "SSH_PRIVATE_KEY does not hold a valid private key: it must hold the key content, or the path to an existing file with it" >&2
+        exit 1
+      fi
     - echo "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
     - eval $(ssh-agent -s) && ssh-add ~/.ssh/id_rsa
     - corepack enable
@@ -365,15 +379,22 @@ rollback_frontend:
     - |
       # The variable holds the key content, or the path to a file with it
       # (a GitLab file variable). Both shapes are accepted.
+      if [ -z "$SSH_PRIVATE_KEY" ]; then
+        echo "SSH_PRIVATE_KEY is empty: it must hold the key content or the path to a file with it" >&2
+        exit 1
+      fi
       if [ -f "$SSH_PRIVATE_KEY" ]; then
         cp "$SSH_PRIVATE_KEY" ~/.ssh/id_rsa
       else
         printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
       fi
       chmod 600 ~/.ssh/id_rsa
-    # A malformed key fails here, with a clear message, instead of at the
-    # first connection with an opaque error.
-    - ssh-keygen -y -f ~/.ssh/id_rsa > /dev/null
+      # A malformed key fails here, with a clear message, instead of at the
+      # first connection with an opaque error.
+      if ! ssh-keygen -y -f ~/.ssh/id_rsa > /dev/null 2>&1; then
+        echo "SSH_PRIVATE_KEY does not hold a valid private key: it must hold the key content, or the path to an existing file with it" >&2
+        exit 1
+      fi
     - echo "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
     - eval $(ssh-agent -s) && ssh-add ~/.ssh/id_rsa
     - corepack enable
