@@ -213,6 +213,47 @@ else
 fi
 
 # ============================================================
+section "scripts/deploy/deploy.sh — the private key can be content or a path"
+# ============================================================
+load_function "$DEPLOY_SCRIPT" "write_private_key" "$env_dir/write_private_key.sh"
+cat >> "$env_dir/write_private_key.sh" <<'EOF'
+EOF
+
+key_content='-----BEGIN PRIVATE KEY-----
+not-a-real-key
+-----END PRIVATE KEY-----'
+
+# The variable holds the content.
+content_target="$env_dir/from_content"
+( source "$env_dir/write_private_key.sh"
+  write_private_key "$content_target" "$key_content" )
+if grep -q "BEGIN PRIVATE KEY" "$content_target"; then
+    pass "installs the key when the variable holds the content"
+else
+    fail "installs the key when the variable holds the content" "the file does not have the key"
+fi
+
+# The variable holds the path to a file with the key (a GitLab file
+# variable).
+key_source_file="$env_dir/key_source"
+printf '%s\n' "$key_content" > "$key_source_file"
+path_target="$env_dir/from_path"
+( source "$env_dir/write_private_key.sh"
+  write_private_key "$path_target" "$key_source_file" )
+if grep -q "BEGIN PRIVATE KEY" "$path_target" && [ "$(cat "$path_target")" = "$(cat "$key_source_file")" ]; then
+    pass "installs the key when the variable holds the path to a file"
+else
+    fail "installs the key when the variable holds the path to a file" "the file does not have the key"
+fi
+
+perms=$(stat -c '%a' "$path_target" 2>/dev/null || stat -f '%Lp' "$path_target")
+if [ "$perms" = "600" ]; then
+    pass "the installed key is only readable by its owner"
+else
+    fail "the installed key is only readable by its owner" "the permissions are $perms"
+fi
+
+# ============================================================
 section "setup.sh — the destructive migration guard"
 # ============================================================
 load_function "$SETUP_SCRIPT" "assert_no_destructive_migration" "$env_dir/guard.sh"

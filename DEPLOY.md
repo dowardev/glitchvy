@@ -174,6 +174,16 @@ Required GitLab CI/CD variables (Settings → CI/CD → Variables):
 
 ---
 
+The private key can be stored either way:
+
+- as a **plain variable** whose value is the key content, or
+- as a **file variable**, whose value is the path to a file that holds the
+  key. The file variable is the better option for an SSH key: the content is
+  multiline, GitLab cannot mask it as a plain variable, and with a file
+  variable the key never reaches the job log.
+
+Both shapes are accepted by the pipeline and by `deploy.sh`.
+
 ## 4. Rollback
 
 From CI: run the `rollback_backend` / `rollback_frontend` job of the tag pipeline. Both roll back to the newest **stable** release older than the tag being deployed, selected by `scripts/ci/previous-tag.sh` (prereleases and malformed tags never qualify, and a tag that is not a semver fails with a clear message).

@@ -181,7 +181,15 @@ build:packages:
   before_script:
     - apk add --no-cache openssh-client
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
-    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa
+    - |
+      # The variable holds the key content, or the path to a file with it
+      # (a GitLab file variable). Both shapes are accepted.
+      if [ -f "$SSH_PRIVATE_KEY" ]; then
+        cp "$SSH_PRIVATE_KEY" ~/.ssh/id_rsa
+      else
+        printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+      fi
+      chmod 600 ~/.ssh/id_rsa
     # A malformed key fails here, with a clear message, instead of at the
     # first connection with an opaque error.
     - ssh-keygen -y -f ~/.ssh/id_rsa > /dev/null
@@ -264,7 +272,15 @@ frontend_deploy:
   before_script:
     - apk add --no-cache openssh-client
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
-    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa
+    - |
+      # The variable holds the key content, or the path to a file with it
+      # (a GitLab file variable). Both shapes are accepted.
+      if [ -f "$SSH_PRIVATE_KEY" ]; then
+        cp "$SSH_PRIVATE_KEY" ~/.ssh/id_rsa
+      else
+        printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+      fi
+      chmod 600 ~/.ssh/id_rsa
     # A malformed key fails here, with a clear message, instead of at the
     # first connection with an opaque error.
     - ssh-keygen -y -f ~/.ssh/id_rsa > /dev/null
@@ -346,7 +362,15 @@ rollback_frontend:
   before_script:
     - apk add --no-cache openssh-client git
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
-    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa
+    - |
+      # The variable holds the key content, or the path to a file with it
+      # (a GitLab file variable). Both shapes are accepted.
+      if [ -f "$SSH_PRIVATE_KEY" ]; then
+        cp "$SSH_PRIVATE_KEY" ~/.ssh/id_rsa
+      else
+        printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+      fi
+      chmod 600 ~/.ssh/id_rsa
     # A malformed key fails here, with a clear message, instead of at the
     # first connection with an opaque error.
     - ssh-keygen -y -f ~/.ssh/id_rsa > /dev/null

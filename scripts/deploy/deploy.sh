@@ -27,7 +27,8 @@
 # Required env vars (from scripts/deploy/.env):
 #   SSH_HOST, SSH_PORT, SSH_USER
 #   DEPLOY_PATH_BACKEND, DEPLOY_PATH_FRONTEND (fullstack)
-#   SSH_PRIVATE_KEY (content) OR SSH_PRIVATE_KEY_PATH (file) — optional
+#   SSH_PRIVATE_KEY (the key content, or the path to a file with it) OR
+#   SSH_PRIVATE_KEY_PATH (file) — optional
 #   SSH_KNOWN_HOSTS — optional
 #
 # Required config vars (from scripts/deploy/deploy.conf):
@@ -210,6 +211,19 @@ esac
 # Check that a private key file is a real private key. ssh-keygen parses it
 # without printing anything; a file that is not a key is rejected before it is
 # installed or used as the ssh identity.
+# The private key can arrive in two shapes: as the content of the
+# variable, or as the path to a file (a GitLab file variable holds the
+# content in a file and puts the path in the variable).
+write_private_key() {
+    local destination="$1" source_value="$2"
+    if [ -f "$source_value" ]; then
+        cp "$source_value" "$destination"
+    else
+        printf '%s\n' "$source_value" > "$destination"
+    fi
+    chmod 600 "$destination"
+}
+
 validate_private_key() {
     local key_file="$1"
     if ! command -v ssh-keygen >/dev/null 2>&1; then
@@ -263,8 +277,7 @@ setup_ssh() {
       # be installed as ~/.ssh/id_rsa.
       local key_tmp
       key_tmp="$(mktemp)"
-      printf '%s\n' "$SSH_PRIVATE_KEY" > "$key_tmp"
-      chmod 600 "$key_tmp"
+      write_private_key "$key_tmp" "$SSH_PRIVATE_KEY"
       validate_private_key "$key_tmp" || { rm -f "$key_tmp"; exit 2; }
       mv "$key_tmp" "$ssh_dir/id_rsa"
       chmod 600 "$ssh_dir/id_rsa"
