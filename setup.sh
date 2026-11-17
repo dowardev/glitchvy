@@ -148,7 +148,10 @@ restrict_env_permissions() {
     chmod 600 "$path" || return 1
     local backup
     for backup in "${path}".bak.*; do
-        [ -f "$backup" ] && chmod 600 "$backup"
+        [ -f "$backup" ] || continue
+        # A backup that cannot be restricted is a secret left readable:
+        # the failure is reported instead of being swallowed.
+        chmod 600 "$backup" || return 1
     done
     return 0
 }

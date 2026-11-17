@@ -456,6 +456,21 @@ else
     fail "setup.sh restricts the environment file and its backups to the owner" "modes: $perm_mode / $perm_backup_mode"
 fi
 
+# A backup that cannot be restricted is a secret left readable: the failure
+# has to reach the caller instead of being swallowed.
+(
+    set -uo pipefail
+    chmod() { return 1; }
+    . "$perm_dir/restrict.sh"
+    restrict_env_permissions "$perm_env"
+) >/dev/null 2>&1
+restrict_status=$?
+if [ "$restrict_status" -ne 0 ]; then
+    pass "setup.sh reports a failure when the environment file cannot be restricted"
+else
+    fail "setup.sh reports a failure when the environment file cannot be restricted" "the function returned 0"
+fi
+
 configure_backend_body="$(awk '/^configure_backend\(\) \{/,/^\}/' "$SETUP_SCRIPT")"
 if grep -q "restrict_env_permissions" <<< "$configure_backend_body"; then
     pass "setup.sh applies the environment file permissions in configure_backend"
