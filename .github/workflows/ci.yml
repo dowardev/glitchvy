@@ -53,7 +53,8 @@ jobs:
         run: pnpm install --frozen-lockfile || pnpm install
 
       - name: Lint SDK
-        run: pnpm --filter @dowardev/glitchvy lint || true
+        continue-on-error: true
+        run: pnpm --filter @dowardev/glitchvy lint
 
   lint:server:
     name: lint:server
