@@ -1,0 +1,59 @@
+# ============================================================
+# glitchvy monorepo — GitHub Actions release pipeline
+# Traducido desde el stage `build` de .gitlab-ci.yml
+#
+# En GitLab el job `build:packages` corria unicamente con tags
+# semver (`vX.Y.Z`). En GitHub el filtro equivalente es
+# `matches(github.ref_name, /^v\d+\.\d+\.\d+$/)`.
+# ============================================================
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  COMPOSER_CACHE_DIR: ${{ github.workspace }}/back/.composer
+  NPM_CONFIG_CACHE: ${{ github.workspace }}/.npm
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:packages:
+    name: build:packages
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') && matches(github.ref_name, /^v\d+\.\d+\.\d+$/)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile || pnpm install
+
+      - name: Build SDK and admin app
+        run: |
+          pnpm --filter @dowardev/glitchvy build
+          pnpm --filter glitchvy-admin build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-packages
+          path: |
+            packages/sdk/dist
+            front/dist
+          retention-days: 30
