@@ -72,6 +72,7 @@ jobs:
     name: backend_deploy
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    environment: production
     needs: [release_gate]
     if: needs.release_gate.outputs.release == 'true'
     steps:
@@ -182,6 +183,7 @@ jobs:
     name: frontend_deploy
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    environment: production
     needs: [release_gate]
     if: needs.release_gate.outputs.release == 'true'
     steps:
@@ -280,6 +282,7 @@ jobs:
     name: backend_migrate
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    environment: production
     # Sin `needs: [backend_deploy]`: en un workflow_dispatch ese job queda
     # skipped (el gate no matchea) y GitHub skipea tambien los dependientes,
     # con lo que la migracion manual no se podria ejecutar nunca.
@@ -370,6 +373,7 @@ jobs:
     name: rollback_backend
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    environment: production
     if: github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout
@@ -525,6 +529,7 @@ jobs:
     name: rollback_frontend
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    environment: production
     if: github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout
