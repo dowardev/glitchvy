@@ -11,7 +11,8 @@ The tooling lives in the repository:
 | `scripts/deploy/deploy.conf` | Project configuration (committed). |
 | `scripts/deploy/deploy.conf.example` | Template for the project configuration. |
 | `scripts/deploy/.env.example` | Template for the host values and secrets (copy to `.env`). |
-| `.gitlab-ci.yml` | `deploy` and `rollback` stages (tag-only). |
+| `.github/workflows/deploy.yml` | `deploy` and `rollback` stages (tag-only, GitHub Actions). |
+| `.github/workflows/tooling-tests.yml` | Deploy tooling test suite (runs on every push). |
 
 > The npm SDK (`packages/sdk`) is **not** published by any of this tooling — it is released by a separate flow.
 
@@ -155,42 +156,35 @@ The deploy script builds the SPA with `pnpm --filter glitchvy-admin build` from 
 
 ## 3. CI/CD deploy (tag-only)
 
-Pushing a semver tag (`v1.2.3`, `v1.2.3-rc.1`) runs the pipeline with the `deploy` stage:
+Pushing a semver tag (`v1.2.3`, `v1.2.3-rc.1`, `v1.2.3-dryrun.1`) runs the GitHub Actions
+workflow **Deploy** (`.github/workflows/deploy.yml`) with the deploy jobs:
 
 - `backend_deploy` — ships `back/` (without `vendor`, `.env*`, the local sqlite database and the generated caches), then runs `composer install --no-dev`, `config:cache` and `route:cache` on the server. It does **not** migrate.
-- `backend_migrate` — **manual** job: runs the pending migrations with the same destructive-migration guard as `--migrate`. Start it explicitly after reviewing what the migration does.
+- `backend_migrate` — **manual** job: runs the pending migrations with the same destructive-migration guard as `--migrate`. Start it explicitly after reviewing what the migration does. Requires `ALLOW_DESTRUCTIVE_MIGRATIONS=1` to apply a destructive migration.
 - `frontend_deploy` — builds the SPA and ships `front/dist/`.
 
-The `rollback` stage adds two **manual** jobs (`rollback_backend`, `rollback_frontend`) that redeploy the previous tag.
+The workflow also provides two **manual** rollback jobs (`rollback_backend`, `rollback_frontend`) that redeploy the previous stable tag.
 
-Required GitLab CI/CD variables (Settings → CI/CD → Variables):
+**Critical: the deploy jobs are gated by `release_gate`.** `backend_deploy` and `frontend_deploy` run only when `release_gate` outputs `release == 'true'` (i.e. the pushed tag matches the semver regex). A `workflow_dispatch` on `main` does **not** trigger a deploy because `github.ref_name` is `main`, which does not match the semver pattern. Only the manual jobs (`backend_migrate`, `rollback_backend`, `rollback_frontend`) are enabled via `workflow_dispatch`.
 
-| Variable | Example |
-| --- | --- |
-| `SSH_HOST` | `195.179.236.189` |
-| `SSH_PORT` | `65002` |
-| `SSH_USER` | `u902881280` |
-| `SSH_PRIVATE_KEY` | the private key content, or the path to a file with it (a file variable) |
-| `SSH_KNOWN_HOSTS` | the `known_hosts` line |
-| `DEPLOY_PATH_BACKEND` | `/home/u902881280/public_html/glitchvy/back` |
-| `DEPLOY_PATH_FRONTEND` | `/home/u902881280/public_html/glitchvy` |
-| `ALLOW_DESTRUCTIVE_MIGRATIONS` | optional: `1` lets the manual `backend_migrate` job apply a destructive migration |
+Required GitHub repository credentials (Settings → Secrets and variables → Actions):
 
-The private key is accepted in both shapes: the content of the variable, or the path to a file
-that holds it (a GitLab file variable). An empty or invalid key fails the job with an explicit
-message, instead of installing a broken key that fails later at the first connection.
+| Credential | Type | Example | Status |
+| --- | --- | --- | --- |
+| `SSH_HOST` | Variable | `195.179.236.189` | Loaded in GitHub |
+| `SSH_PORT` | Variable | `65002` | Loaded in GitHub |
+| `SSH_USER` | Variable | `u902881280` | Loaded in GitHub |
+| `SSH_PRIVATE_KEY` | Secret | (key content) | Loaded in GitHub |
+| `SSH_KNOWN_HOSTS` | Secret | (known_hosts line) | Loaded in GitHub |
+| `DEPLOY_PATH_BACKEND` | Variable | `/home/u902881280/public_html/glitchvy/back` | Loaded in GitHub |
+| `DEPLOY_PATH_FRONTEND` | Variable | `/home/u902881280/public_html/glitchvy` | Loaded in GitHub |
+| `ALLOW_DESTRUCTIVE_MIGRATIONS` | Variable | `0` (default) | Loaded in GitHub |
 
----
+> **Note:** In GitHub Actions the private key is always provided as the **content** of the secret (not a file path). The installation block accepts both shapes for compatibility, but the GitHub secret holds the key content directly.
 
-The private key can be stored either way:
+> ⚠️ **SECURITY WARNING: The current SSH private key is compromised.** It was printed in the output of a work session. **You must rotate it before the first real production deploy:** generate a new key pair, install the public key in `~/.ssh/authorized_keys` on the server, remove the old key, and update the `SSH_PRIVATE_KEY` secret in GitHub. **Do not deploy to production until the key is rotated.**
 
-- as a **plain variable** whose value is the key content, or
-- as a **file variable**, whose value is the path to a file that holds the
-  key. The file variable is the better option for an SSH key: the content is
-  multiline, GitLab cannot mask it as a plain variable, and with a file
-  variable the key never reaches the job log.
-
-Both shapes are accepted by the pipeline and by `deploy.sh`.
+**Required status checks:** The deploy and rollback jobs (`backend_deploy`, `frontend_deploy`, `backend_migrate`, `rollback_backend`, `rollback_frontend`) **cannot be configured as required checks** on the `main` branch protection rules. They run only on semver tags or via manual `workflow_dispatch`; making them required would block every PR merge forever. The required checks for `main` remain the PR jobs: `lint:*`, `test:*`, and `test:deploy-tooling`.
 
 ## 4. Rollback
 
@@ -310,8 +304,9 @@ exclusions.
 bash scripts/deploy/tests/run-tests.sh
 ```
 
-CI runs it in the `test:deploy-tooling` job of the `test` stage, so a
-broken deploy script never reaches a tag pipeline.
+CI runs it in the `test:deploy-tooling` job of the **Deploy Tooling Tests**
+workflow (`.github/workflows/tooling-tests.yml`), which triggers on every
+push (including PRs), so a broken deploy script never reaches a tag pipeline.
 
 ## 9. Useful commands
 

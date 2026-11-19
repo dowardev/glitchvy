@@ -1,0 +1,656 @@
+# ============================================================
+# glitchvy monorepo — GitHub Actions deploy & rollback
+# Ported from .gitlab-ci.yml (deploy and rollback stages)
+#
+# Jobs run only on semver tags (vX.Y.Z with optional prerelease),
+# except the manual jobs which are also enabled via workflow_dispatch.
+# The deploy jobs (backend_deploy, frontend_deploy) depend on the
+# release_gate output: they run only when release == 'true'.
+# The manual jobs (backend_migrate, rollback_backend, rollback_frontend)
+# are available on any workflow_dispatch to main.
+# ============================================================
+
+name: Deploy
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      rollback_to_tag:
+        description: 'Tag to roll back to (optional, overrides automatic selection)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  COMPOSER_CACHE_DIR: ${{ github.workspace }}/back/.composer
+  NPM_CONFIG_CACHE: ${{ github.workspace }}/.npm
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  # Gate de tag semver: las expresiones de GitHub Actions no tienen regex
+  # (no existe `matches()`), asi que el filtro exacto de las tag rules de
+  # GitLab (^vX.Y.Z con prerelease opcional, incluye dryrun) se evalua aqui
+  # en bash. Igual que en release.yml y ci.yml.
+  release_gate:
+    name: release_gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      release: ${{ steps.check.outputs.release }}
+    steps:
+      - id: check
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc|dryrun)\.[0-9]+)?$ ]]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ============================================================
+  # SSH key installation block (shared)
+  # The variable holds the key content (GitHub Actions secret). The block
+  # also accepts a path to a file with the key (GitLab file variable style).
+  # A malformed key fails here with a clear message.
+  # ============================================================
+  # This block is referenced by the deploy and rollback jobs via a
+  # composite action-like pattern: each job sources it in a step.
+
+  # ============================================================
+  # Backend deploy — runs only when release_gate says release == 'true'
+  # ============================================================
+  backend_deploy:
+    name: backend_deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [release_gate]
+    if: needs.release_gate.outputs.release == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+          tools: composer:v2
+
+      - name: Install SSH key and known_hosts
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          # The key directory must exist before writing the key: a fresh runner
+          # may not have it, and the failure would be an opaque redirect error.
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          # The variable holds the key content, or the path to a file with it
+          # (a GitLab file variable). Both shapes are accepted.
+          if [ -z "$SSH_PRIVATE_KEY" ]; then
+            echo "SSH_PRIVATE_KEY is empty: it must hold the key content or the path to a file with it" >&2
+            exit 1
+          fi
+          if [ -f "$SSH_PRIVATE_KEY" ]; then
+            cp "$SSH_PRIVATE_KEY" ~/.ssh/id_rsa
+          else
+            printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          fi
+          chmod 600 ~/.ssh/id_rsa
+          # A malformed key fails here, with a clear message, instead of at the
+          # first connection with an opaque error.
+          if ! ssh-keygen -y -f ~/.ssh/id_rsa > /dev/null 2>&1; then
+            echo "SSH_PRIVATE_KEY does not hold a valid private key: it must hold the key content, or the path to an existing file with it" >&2
+            exit 1
+          fi
+
+      - name: Configure SSH
+        env:
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
+          printf 'Host *\n  HostKeyAlgorithms +ssh-rsa\n  PubkeyAcceptedAlgorithms +ssh-rsa\n' > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+          eval $(ssh-agent -s) && ssh-add ~/.ssh/id_rsa
+
+      - name: Create backend tarball
+        env:
+          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_HOST: ${{ vars.SSH_HOST }}
+        run: |
+          tar -czf /tmp/backend.tar.gz \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='vendor' \
+            --exclude='.env' \
+            --exclude='.env.*' \
+            --exclude='storage/logs/*' \
+            --exclude='storage/app/*' \
+            --exclude='storage/framework/cache/*' \
+            --exclude='storage/framework/sessions/*' \
+            --exclude='storage/framework/views/*' \
+            --exclude='bootstrap/cache/*.php' \
+            --exclude='database/database.sqlite' \
+            -C back .
+
+      - name: Upload backend tarball
+        env:
+          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_HOST: ${{ vars.SSH_HOST }}
+        run: |
+          scp -P "$SSH_PORT" -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+            /tmp/backend.tar.gz "$SSH_USER@$SSH_HOST:/tmp/backend.tar.gz"
+
+      - name: Deploy backend on server
+        env:
+          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_HOST: ${{ vars.SSH_HOST }}
+          DEPLOY_PATH_BACKEND: ${{ vars.DEPLOY_PATH_BACKEND }}
+        run: |
+          ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+            "$SSH_USER@$SSH_HOST" "
+            set -e
+            mkdir -p $DEPLOY_PATH_BACKEND &&
+            tar -xzf /tmp/backend.tar.gz -C $DEPLOY_PATH_BACKEND &&
+            cd $DEPLOY_PATH_BACKEND &&
+            mkdir -p storage/framework/views storage/framework/cache/data storage/framework/sessions storage/app/private &&
+            chmod -R 775 storage bootstrap/cache &&
+            composer install --no-dev --optimize-autoloader --no-interaction &&
+            php artisan config:cache &&
+            php artisan route:cache &&
+            rm /tmp/backend.tar.gz
+          "
+
+  # ============================================================
+  # Frontend deploy — runs only when release_gate says release == 'true'
+  # ============================================================
+  frontend_deploy:
+    name: frontend_deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [release_gate]
+    if: needs.release_gate.outputs.release == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node and pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: '11.3.0'
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install SSH key and known_hosts
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          # The key directory must exist before writing the key: a fresh runner
+          # may not have it, and the failure would be an opaque redirect error.
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          # The variable holds the key content, or the path to a file with it
+          # (a GitLab file variable). Both shapes are accepted.
+          if [ -z "$SSH_PRIVATE_KEY" ]; then
+            echo "SSH_PRIVATE_KEY is empty: it must hold the key content or the path to a file with it" >&2
+            exit 1
+          fi
+          if [ -f "$SSH_PRIVATE_KEY" ]; then
+            cp "$SSH_PRIVATE_KEY" ~/.ssh/id_rsa
+          else
+            printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          fi
+          chmod 600 ~/.ssh/id_rsa
+          # A malformed key fails here, with a clear message, instead of at the
+          # first connection with an opaque error.
+          if ! ssh-keygen -y -f ~/.ssh/id_rsa > /dev/null 2>&1; then
+            echo "SSH_PRIVATE_KEY does not hold a valid private key: it must hold the key content, or the path to an existing file with it" >&2
+            exit 1
+          fi
+
+      - name: Configure SSH
+        env:
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
+          printf 'Host *\n  HostKeyAlgorithms +ssh-rsa\n  PubkeyAcceptedAlgorithms +ssh-rsa\n' > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+          eval $(ssh-agent -s) && ssh-add ~/.ssh/id_rsa
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: pnpm --filter glitchvy-admin build
+
+      - name: Create frontend tarball
+        run: |
+          tar -czf /tmp/frontend.tar.gz -C front/dist .
+
+      - name: Upload frontend tarball
+        env:
+          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_HOST: ${{ vars.SSH_HOST }}
+        run: |
+          scp -P "$SSH_PORT" -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+            /tmp/frontend.tar.gz "$SSH_USER@$SSH_HOST:/tmp/frontend.tar.gz"
+
+      - name: Deploy frontend on server
+        env:
+          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_HOST: ${{ vars.SSH_HOST }}
+          DEPLOY_PATH_FRONTEND: ${{ vars.DEPLOY_PATH_FRONTEND }}
+        run: |
+          ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+            "$SSH_USER@$SSH_HOST" "
+            set -e
+            mkdir -p $DEPLOY_PATH_FRONTEND &&
+            tar -xzf /tmp/frontend.tar.gz -C $DEPLOY_PATH_FRONTEND &&
+            rm /tmp/frontend.tar.gz
+          "
+
+  # ============================================================
+  # Backend migrations — MANUAL, never automatic
+  # Runs only with ALLOW_DESTRUCTIVE_MIGRATIONS=1 and after the
+  # dry-run guard (migrate --pretend --force) passes.
+  # ============================================================
+  backend_migrate:
+    name: backend_migrate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Sin `needs: [backend_deploy]`: en un workflow_dispatch ese job queda
+    # skipped (el gate no matchea) y GitHub skipea tambien los dependientes,
+    # con lo que la migracion manual no se podria ejecutar nunca.
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+          tools: composer:v2
+
+      - name: Install SSH key and known_hosts
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          # The key directory must exist before writing the key: a fresh runner
+          # may not have it, and the failure would be an opaque redirect error.
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          # The variable holds the key content, or the path to a file with it
+          # (a GitLab file variable). Both shapes are accepted.
+          if [ -z "$SSH_PRIVATE_KEY" ]; then
+            echo "SSH_PRIVATE_KEY is empty: it must hold the key content or the path to a file with it" >&2
+            exit 1
+          fi
+          if [ -f "$SSH_PRIVATE_KEY" ]; then
+            cp "$SSH_PRIVATE_KEY" ~/.ssh/id_rsa
+          else
+            printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          fi
+          chmod 600 ~/.ssh/id_rsa
+          # A malformed key fails here, with a clear message, instead of at the
+          # first connection with an opaque error.
+          if ! ssh-keygen -y -f ~/.ssh/id_rsa > /dev/null 2>&1; then
+            echo "SSH_PRIVATE_KEY does not hold a valid private key: it must hold the key content, or the path to an existing file with it" >&2
+            exit 1
+          fi
+
+      - name: Configure SSH
+        env:
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
+          printf 'Host *\n  HostKeyAlgorithms +ssh-rsa\n  PubkeyAcceptedAlgorithms +ssh-rsa\n' > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+          eval $(ssh-agent -s) && ssh-add ~/.ssh/id_rsa
+
+      - name: Run migrations with destructive guard
+        env:
+          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_HOST: ${{ vars.SSH_HOST }}
+          DEPLOY_PATH_BACKEND: ${{ vars.DEPLOY_PATH_BACKEND }}
+          ALLOW_DESTRUCTIVE_MIGRATIONS: ${{ vars.ALLOW_DESTRUCTIVE_MIGRATIONS }}
+        run: |
+          ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+            "$SSH_USER@$SSH_HOST" "
+            set -e
+            cd $DEPLOY_PATH_BACKEND
+            PENDING=\$(php artisan migrate --pretend --force --no-ansi 2>/dev/null) || {
+              echo 'Cannot read the pending migrations (migrate --pretend failed).' >&2
+              exit 1
+            }
+            if echo \"\$PENDING\" | grep -qiE 'drop table|drop column|drop index|drop constraint|drop foreign key|truncate|rename column|rename table'; then
+              if [ \"\${ALLOW_DESTRUCTIVE_MIGRATIONS:-}\" != '1' ]; then
+                echo 'Destructive migration detected. Review it, then set ALLOW_DESTRUCTIVE_MIGRATIONS=1 as a repository variable to apply it.' >&2
+                exit 1
+              fi
+              echo 'WARNING: applying a destructive migration (ALLOW_DESTRUCTIVE_MIGRATIONS=1)'
+            fi
+            php artisan migrate --force
+          "
+
+  # ============================================================
+  # Rollback backend — MANUAL
+  # Selects the previous stable tag with scripts/ci/previous-tag.sh
+  # (accepts ROLLBACK_TO_TAG override), deploys it, and VERIFIES
+  # the restored application before reporting success.
+  # ============================================================
+  rollback_backend:
+    name: rollback_backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+          tools: composer:v2
+
+      - name: Install SSH key and known_hosts
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          # The key directory must exist before writing the key: a fresh runner
+          # may not have it, and the failure would be an opaque redirect error.
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          # The variable holds the key content, or the path to a file with it
+          # (a GitLab file variable). Both shapes are accepted.
+          if [ -z "$SSH_PRIVATE_KEY" ]; then
+            echo "SSH_PRIVATE_KEY is empty: it must hold the key content or the path to a file with it" >&2
+            exit 1
+          fi
+          if [ -f "$SSH_PRIVATE_KEY" ]; then
+            cp "$SSH_PRIVATE_KEY" ~/.ssh/id_rsa
+          else
+            printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          fi
+          chmod 600 ~/.ssh/id_rsa
+          # A malformed key fails here, with a clear message, instead of at the
+          # first connection with an opaque error.
+          if ! ssh-keygen -y -f ~/.ssh/id_rsa > /dev/null 2>&1; then
+            echo "SSH_PRIVATE_KEY does not hold a valid private key: it must hold the key content, or the path to an existing file with it" >&2
+            exit 1
+          fi
+
+      - name: Configure SSH
+        env:
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
+          printf 'Host *\n  HostKeyAlgorithms +ssh-rsa\n  PubkeyAcceptedAlgorithms +ssh-rsa\n' > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+          eval $(ssh-agent -s) && ssh-add ~/.ssh/id_rsa
+
+      - name: Determine rollback target tag
+        id: rollback_tag
+        env:
+          ROLLBACK_TO_TAG: ${{ github.event.inputs.rollback_to_tag }}
+        run: |
+          git fetch --tags
+          if [ -n "${ROLLBACK_TO_TAG:-}" ]; then
+            PREVIOUS_TAG="$ROLLBACK_TO_TAG"
+          else
+            CURRENT_TAG="${{ github.ref_name }}"
+          if ! [[ "$CURRENT_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            # En un dispatch manual no hay tag: el release desplegado es el
+            # ultimo tag estable, y el destino del rollback es el anterior.
+            CURRENT_TAG="$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
+            if [ -z "$CURRENT_TAG" ]; then
+              echo "No stable release tag found to roll back from." >&2
+              exit 1
+            fi
+          fi
+          PREVIOUS_TAG="$(scripts/ci/previous-tag.sh "$CURRENT_TAG")"
+          fi
+          echo "Rolling back to $PREVIOUS_TAG"
+          echo "previous_tag=$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout previous tag backend
+        run: |
+          git checkout "${{ steps.rollback_tag.outputs.previous_tag }}" -- back/
+
+      - name: Create backend rollback tarball
+        env:
+          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_HOST: ${{ vars.SSH_HOST }}
+        run: |
+          tar -czf /tmp/backend-rollback.tar.gz \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='vendor' \
+            --exclude='.env' \
+            --exclude='.env.*' \
+            --exclude='storage/logs/*' \
+            --exclude='storage/app/*' \
+            --exclude='storage/framework/cache/*' \
+            --exclude='storage/framework/sessions/*' \
+            --exclude='storage/framework/views/*' \
+            --exclude='bootstrap/cache/*.php' \
+            --exclude='database/database.sqlite' \
+            -C back .
+
+      - name: Upload backend rollback tarball
+        env:
+          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_HOST: ${{ vars.SSH_HOST }}
+        run: |
+          scp -P "$SSH_PORT" -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+            /tmp/backend-rollback.tar.gz "$SSH_USER@$SSH_HOST:/tmp/backend-rollback.tar.gz"
+
+      - name: Deploy backend rollback on server
+        env:
+          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_HOST: ${{ vars.SSH_HOST }}
+          DEPLOY_PATH_BACKEND: ${{ vars.DEPLOY_PATH_BACKEND }}
+        run: |
+          ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+            "$SSH_USER@$SSH_HOST" "
+            set -e
+            mkdir -p $DEPLOY_PATH_BACKEND &&
+            tar -xzf /tmp/backend-rollback.tar.gz -C $DEPLOY_PATH_BACKEND &&
+            cd $DEPLOY_PATH_BACKEND &&
+            mkdir -p storage/framework/views storage/framework/cache/data storage/framework/sessions storage/app/private &&
+            chmod -R 775 storage bootstrap/cache &&
+            composer install --no-dev --optimize-autoloader --no-interaction &&
+            php artisan config:cache &&
+            php artisan route:cache &&
+            rm /tmp/backend-rollback.tar.gz
+          "
+
+      - name: Verify backend rollback
+        env:
+          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_HOST: ${{ vars.SSH_HOST }}
+          DEPLOY_PATH_BACKEND: ${{ vars.DEPLOY_PATH_BACKEND }}
+        run: |
+          ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+            "$SSH_USER@$SSH_HOST" "
+            set -e
+            test -f $DEPLOY_PATH_BACKEND/public/index.php &&
+            cd $DEPLOY_PATH_BACKEND &&
+            php artisan --version
+          "
+
+  # ============================================================
+  # Rollback frontend — MANUAL
+  # Selects the previous stable tag with scripts/ci/previous-tag.sh
+  # (accepts ROLLBACK_TO_TAG override), builds and deploys it, and
+  # VERIFIES the restored build before reporting success.
+  # ============================================================
+  rollback_frontend:
+    name: rollback_frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node and pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: '11.3.0'
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install SSH key and known_hosts
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          # The key directory must exist before writing the key: a fresh runner
+          # may not have it, and the failure would be an opaque redirect error.
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          # The variable holds the key content, or the path to a file with it
+          # (a GitLab file variable). Both shapes are accepted.
+          if [ -z "$SSH_PRIVATE_KEY" ]; then
+            echo "SSH_PRIVATE_KEY is empty: it must hold the key content or the path to a file with it" >&2
+            exit 1
+          fi
+          if [ -f "$SSH_PRIVATE_KEY" ]; then
+            cp "$SSH_PRIVATE_KEY" ~/.ssh/id_rsa
+          else
+            printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          fi
+          chmod 600 ~/.ssh/id_rsa
+          # A malformed key fails here, with a clear message, instead of at the
+          # first connection with an opaque error.
+          if ! ssh-keygen -y -f ~/.ssh/id_rsa > /dev/null 2>&1; then
+            echo "SSH_PRIVATE_KEY does not hold a valid private key: it must hold the key content, or the path to an existing file with it" >&2
+            exit 1
+          fi
+
+      - name: Configure SSH
+        env:
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
+          printf 'Host *\n  HostKeyAlgorithms +ssh-rsa\n  PubkeyAcceptedAlgorithms +ssh-rsa\n' > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+          eval $(ssh-agent -s) && ssh-add ~/.ssh/id_rsa
+
+      - name: Determine rollback target tag
+        id: rollback_tag
+        env:
+          ROLLBACK_TO_TAG: ${{ github.event.inputs.rollback_to_tag }}
+        run: |
+          git fetch --tags
+          if [ -n "${ROLLBACK_TO_TAG:-}" ]; then
+            PREVIOUS_TAG="$ROLLBACK_TO_TAG"
+          else
+            CURRENT_TAG="${{ github.ref_name }}"
+          if ! [[ "$CURRENT_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            # En un dispatch manual no hay tag: el release desplegado es el
+            # ultimo tag estable, y el destino del rollback es el anterior.
+            CURRENT_TAG="$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
+            if [ -z "$CURRENT_TAG" ]; then
+              echo "No stable release tag found to roll back from." >&2
+              exit 1
+            fi
+          fi
+          PREVIOUS_TAG="$(scripts/ci/previous-tag.sh "$CURRENT_TAG")"
+          fi
+          echo "Rolling back to $PREVIOUS_TAG"
+          echo "previous_tag=$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout previous tag frontend
+        run: |
+          git checkout "${{ steps.rollback_tag.outputs.previous_tag }}" -- front/
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: pnpm --filter glitchvy-admin build
+
+      - name: Create frontend rollback tarball
+        run: |
+          tar -czf /tmp/frontend-rollback.tar.gz -C front/dist .
+
+      - name: Upload frontend rollback tarball
+        env:
+          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_HOST: ${{ vars.SSH_HOST }}
+        run: |
+          scp -P "$SSH_PORT" -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+            /tmp/frontend-rollback.tar.gz "$SSH_USER@$SSH_HOST:/tmp/frontend-rollback.tar.gz"
+
+      - name: Deploy frontend rollback on server
+        env:
+          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_HOST: ${{ vars.SSH_HOST }}
+          DEPLOY_PATH_FRONTEND: ${{ vars.DEPLOY_PATH_FRONTEND }}
+        run: |
+          ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+            "$SSH_USER@$SSH_HOST" "
+            set -e
+            mkdir -p $DEPLOY_PATH_FRONTEND &&
+            tar -xzf /tmp/frontend-rollback.tar.gz -C $DEPLOY_PATH_FRONTEND &&
+            rm /tmp/frontend-rollback.tar.gz
+          "
+
+      - name: Verify frontend rollback
+        env:
+          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_HOST: ${{ vars.SSH_HOST }}
+          DEPLOY_PATH_FRONTEND: ${{ vars.DEPLOY_PATH_FRONTEND }}
+        run: |
+          ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+            "$SSH_USER@$SSH_HOST" "
+            set -e
+            test -f $DEPLOY_PATH_FRONTEND/index.html &&
+            test -d $DEPLOY_PATH_FRONTEND/assets
+          "

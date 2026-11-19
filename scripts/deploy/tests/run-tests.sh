@@ -359,7 +359,7 @@ fi
 # ============================================================
 section "the CI pipeline — the rollback verifies the restored release"
 # ============================================================
-ci_file="$REPO_ROOT/.gitlab-ci.yml"
+ci_file="$REPO_ROOT/.github/workflows/deploy.yml"
 if grep -q 'php artisan --version' "$ci_file" && grep -q 'test -f \$DEPLOY_PATH_BACKEND/public/index.php' "$ci_file"; then
     pass "the backend rollback verifies the restored application"
 else
@@ -480,15 +480,23 @@ fi
 
 # The key installation of the pipeline is extracted from the CI file, so the
 # test runs the very same code the runner executes.
+# The extraction is robust to indentation: in GitHub Actions the block is
+# a `run: |` heredoc at 8-space indent, with content at 10-space indent.
+# We match on the `run: |` marker and collect content lines. We fail loudly
+# if the block is not found.
 ci_key_block="$(awk '
-    /^    - \|$/ { collecting = 1; block = ""; next }
+    /^        run: \|$/ { collecting = 1; block = ""; next }
     collecting {
         if ($0 == "") { next }
-        if (substr($0, 1, 6) == "      ") { block = block substr($0, 7) "\n"; next }
+        if (substr($0, 1, 10) == "          ") { block = block substr($0, 11) "\n"; next }
         if (block ~ /SSH_PRIVATE_KEY/) { print block; exit }
         collecting = 0
     }
-' "$REPO_ROOT/.gitlab-ci.yml")"
+' "$REPO_ROOT/.github/workflows/deploy.yml")"
+if [ -z "$ci_key_block" ]; then
+    echo "FATAL: Could not extract SSH key installation block from .github/workflows/deploy.yml" >&2
+    exit 1
+fi
 
 runner_ssh_dir=".ssh"
 runner_key="id_rsa"
@@ -500,41 +508,39 @@ run_key_block() {
     HOME="$home_dir" SSH_PRIVATE_KEY="$value" bash -c "$ci_key_block" 2>&1
 }
 
-if [ -z "$ci_key_block" ]; then
-    fail "the pipeline refuses an empty private key with a clear message" "the key block could not be extracted from .gitlab-ci.yml"
-    fail "the pipeline refuses a private key that is not a key with a clear message" "the key block could not be extracted from .gitlab-ci.yml"
-    skip "the pipeline installs a valid private key with owner-only permissions" "the key block could not be extracted from .gitlab-ci.yml"
+# The block extraction above already fails noisily if not found, so we
+# don't need the silent-skip branch anymore.
+# The block extraction above already fails noisily if not found, so there is no
+# silent-skip branch here: a missing block aborts the suite.
+empty_out="$(run_key_block "" "$perm_dir/home-empty")"
+empty_status=$?
+if [ "$empty_status" -ne 0 ] && grep -q "SSH_PRIVATE_KEY is empty" <<< "$empty_out"; then
+    pass "the pipeline refuses an empty private key with a clear message"
 else
-    empty_out="$(run_key_block "" "$perm_dir/home-empty")"
-    empty_status=$?
-    if [ "$empty_status" -ne 0 ] && grep -q "SSH_PRIVATE_KEY is empty" <<< "$empty_out"; then
-        pass "the pipeline refuses an empty private key with a clear message"
-    else
-        fail "the pipeline refuses an empty private key with a clear message" "exit $empty_status: $empty_out"
-    fi
+    fail "the pipeline refuses an empty private key with a clear message" "exit $empty_status: $empty_out"
+fi
 
-    missing_out="$(run_key_block "$perm_dir/no-such-key" "$perm_dir/home-missing")"
-    missing_status=$?
-    if [ "$missing_status" -ne 0 ] && grep -q "does not hold a valid private key" <<< "$missing_out"; then
-        pass "the pipeline refuses a private key that is not a key with a clear message"
-    else
-        fail "the pipeline refuses a private key that is not a key with a clear message" "exit $missing_status: $missing_out"
-    fi
+missing_out="$(run_key_block "$perm_dir/no-such-key" "$perm_dir/home-missing")"
+missing_status=$?
+if [ "$missing_status" -ne 0 ] && grep -q "does not hold a valid private key" <<< "$missing_out"; then
+    pass "the pipeline refuses a private key that is not a key with a clear message"
+else
+    fail "the pipeline refuses a private key that is not a key with a clear message" "exit $missing_status: $missing_out"
+fi
 
-    if command -v ssh-keygen >/dev/null 2>&1; then
-        valid_key="$perm_dir/test-key"
-        ssh-keygen -t ed25519 -N "" -f "$valid_key" >/dev/null 2>&1
-        valid_out="$(run_key_block "$valid_key" "$perm_dir/home-valid")"
-        valid_status=$?
-        valid_mode="$(stat -c %a "$perm_dir/home-valid/$runner_ssh_dir/$runner_key" 2>/dev/null || echo '?')"
-        if [ "$valid_status" -eq 0 ] && [ "$valid_mode" = "600" ]; then
-            pass "the pipeline installs a valid private key with owner-only permissions"
-        else
-            fail "the pipeline installs a valid private key with owner-only permissions" "exit $valid_status, mode $valid_mode: $valid_out"
-        fi
+if command -v ssh-keygen >/dev/null 2>&1; then
+    valid_key="$perm_dir/test-key"
+    ssh-keygen -t ed25519 -N "" -f "$valid_key" >/dev/null 2>&1
+    valid_out="$(run_key_block "$valid_key" "$perm_dir/home-valid")"
+    valid_status=$?
+    valid_mode="$(stat -c %a "$perm_dir/home-valid/$runner_ssh_dir/$runner_key" 2>/dev/null || echo '?')"
+    if [ "$valid_status" -eq 0 ] && [ "$valid_mode" = "600" ]; then
+        pass "the pipeline installs a valid private key with owner-only permissions"
     else
-        skip "the pipeline installs a valid private key with owner-only permissions" "ssh-keygen is not available"
+        fail "the pipeline installs a valid private key with owner-only permissions" "exit $valid_status, mode $valid_mode: $valid_out"
     fi
+else
+    skip "the pipeline installs a valid private key with owner-only permissions" "ssh-keygen is not available"
 fi
 
 # ============================================================

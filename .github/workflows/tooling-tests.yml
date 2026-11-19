@@ -1,0 +1,38 @@
+# ============================================================
+# glitchvy monorepo — deployment tooling test suite
+# Runs on every push (including PRs) to catch regressions in
+# the deploy/rollback scripts and the CI pipeline itself.
+# ============================================================
+
+name: Deploy Tooling Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  test_deploy_tooling:
+    name: test:deploy-tooling
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container:
+      image: bash:5.2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install test dependencies
+        run: |
+          apk add --no-cache git openssh-client
+
+      - name: Run deploy tooling tests
+        run: bash scripts/deploy/tests/run-tests.sh
