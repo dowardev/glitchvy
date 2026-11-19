@@ -206,7 +206,11 @@ chmod 400 "$locked_dir"
   sed_set "$locked_file" "APP_NAME" "Glitchvy" ) >/dev/null 2>&1
 status=$?
 chmod 700 "$locked_dir"
-if [ "$status" -eq 6 ]; then
+if [ "$(id -u)" = "0" ]; then
+    # root ignora los permisos del directorio: el error de escritura no se
+    # puede reproducir. No es un fallo del codigo, es del entorno.
+    skip "reports a write permission error with the code 6" "running as root: file permissions are not enforced"
+elif [ "$status" -eq 6 ]; then
     pass "reports a write permission error with the code 6"
 else
     fail "reports a write permission error with the code 6" "exit code was $status"
