@@ -548,6 +548,102 @@ else
 fi
 
 # ============================================================
+section "scripts/deploy/deploy.sh — the child shell"
+
+# run_cmd executes its commands with `bash -c`, and a child shell does not
+# inherit the functions of the parent. A function called from a command
+# string therefore fails with "command not found" (exit 127).
+
+helper="$REPO_ROOT/scripts/deploy/ensure-pnpm.sh"
+
+if [ -x "$helper" ]; then
+    pass "the pnpm bootstrap is an executable script, not a shell function"
+else
+    fail "the pnpm bootstrap is an executable script, not a shell function" "$helper is missing or not executable"
+fi
+
+# The invocation must work in a child shell. A stub pnpm keeps the check
+# deterministic: it does not depend on pnpm being installed on the machine
+# that runs the suite.
+stub_bin="$(mktemp -d)"
+cat > "$stub_bin/pnpm" <<'STUB'
+#!/usr/bin/env bash
+echo "9.9.9-stub"
+STUB
+chmod +x "$stub_bin/pnpm"
+
+stub_out="$(PATH="$stub_bin:$PATH" bash -c "\"$helper\" && pnpm --version" 2>&1)"
+stub_status=$?
+if [ "$stub_status" -eq 0 ] && grep -q "9.9.9-stub" <<< "$stub_out"; then
+    pass "the pnpm bootstrap resolves pnpm inside a child shell"
+else
+    fail "the pnpm bootstrap resolves pnpm inside a child shell" "exit $stub_status: $stub_out"
+fi
+
+# Without pnpm the bootstrap must fail with a clear message, never with
+# "command not found".
+no_pnpm_dir="$(mktemp -d)"
+
+cat > "$no_pnpm_dir/corepack" <<'STUB'
+#!/usr/bin/env bash
+# A corepack that does nothing: the bootstrap must still fail clearly.
+exit 0
+STUB
+chmod +x "$no_pnpm_dir/corepack"
+
+pnpm_bin="$(command -v pnpm 2>/dev/null || true)"
+pnpm_dir=""
+[ -n "$pnpm_bin" ] && pnpm_dir="$(dirname "$pnpm_bin")"
+
+clean_path="$no_pnpm_dir:$(dirname "$(command -v bash)")"
+old_ifs="$IFS"
+IFS=':'
+for part in $PATH; do
+    [ "$part" = "$pnpm_dir" ] && continue
+    clean_path="$clean_path:$part"
+done
+IFS="$old_ifs"
+
+missing_out="$(PATH="$clean_path" bash -c "\"$helper\"" 2>&1)"
+missing_status=$?
+if [ "$missing_status" -ne 0 ] && grep -qi "pnpm" <<< "$missing_out" && ! grep -q "command not found" <<< "$missing_out"; then
+    pass "the pnpm bootstrap fails with a clear message when pnpm is missing"
+else
+    fail "the pnpm bootstrap fails with a clear message when pnpm is missing" "exit $missing_status: $missing_out"
+fi
+
+# Every function the script defines must not be called from a command
+# string: the child shell would not know it.
+script_functions="$(grep -oE '^[a-z_][a-z0-9_]*\(\)' "$DEPLOY_SCRIPT" | tr -d '()' | sort -u)"
+command_strings="$(awk '
+    /run_cmd[ \t]|run_remote[ \t]/ {
+        line = $0
+        sub(/^.*run_(cmd|remote)[ \t]+"/, "", line)
+        sub(/^[^"]*"/, "", line)
+        if (line ~ /^"/) { print line; collect = 0; next }
+        collect = 1
+        next
+    }
+    collect && /^[[:space:]]*"/ { print; next }
+    collect { collect = 0 }
+' "$DEPLOY_SCRIPT")"
+
+missing_in_child=""
+for func_name in $script_functions; do
+    if grep -qw -- "$func_name" <<< "$command_strings"; then
+        missing_in_child="$missing_in_child $func_name"
+    fi
+done
+
+if [ -z "$missing_in_child" ]; then
+    pass "no deploy command calls a shell function that the child shell would not inherit"
+else
+    fail "no deploy command calls a shell function that the child shell would not inherit" "functions used in a command string:$missing_in_child"
+fi
+
+# ============================================================
+rm -rf "$stub_bin" "$no_pnpm_dir"
+
 echo ""
 echo "==========================================="
 echo "  passed: $PASSED"
