@@ -492,15 +492,10 @@ run_remote() {
   return $exit_code
 }
 
-# Ensure pnpm is available without re-running the global corepack mutation every deploy.
-ensure_pnpm() {
-  if ! command -v pnpm >/dev/null 2>&1; then
-    log_debug "pnpm not on PATH — running corepack enable once"
-    corepack enable
-  else
-    log_debug "pnpm already on PATH — skip corepack enable"
-  fi
-}
+# The pnpm bootstrap lives in scripts/deploy/ensure-pnpm.sh, not in a shell
+# function: run_cmd executes its commands in a child shell (`bash -c`) and a
+# child shell does not inherit the functions of the parent, so a function
+# called from a command string would fail with "command not found".
 
 # ============================================================
 # Test Environment Validation
@@ -630,7 +625,7 @@ run_checks() {
       if [[ "$DEPLOY_FRONTEND" == "true" ]]; then
         log_phase "FRONTEND CHECKS"
         run_cmd "Frontend: typecheck (vue-tsc)" \
-          "cd $FRONTEND_DIR && ensure_pnpm && pnpm exec vue-tsc --noEmit"
+          "cd $FRONTEND_DIR && \"$REPO_ROOT/scripts/deploy/ensure-pnpm.sh\" && pnpm exec vue-tsc --noEmit"
         run_cmd "Frontend: unit tests (vitest --run)" \
           "cd $FRONTEND_DIR && pnpm exec vitest --run"
       fi
@@ -639,7 +634,7 @@ run_checks() {
       # reach a release either, so its checks run with every deploy.
       log_phase "SDK CHECKS"
       run_cmd "SDK: typecheck (tsc --noEmit)" \
-        "ensure_pnpm && pnpm --filter @dowardev/glitchvy lint"
+        "\"$REPO_ROOT/scripts/deploy/ensure-pnpm.sh\" && pnpm --filter @dowardev/glitchvy lint"
       run_cmd "SDK: unit tests (vitest --run)" \
         "pnpm --filter @dowardev/glitchvy test:run"
       ;;
@@ -648,7 +643,7 @@ run_checks() {
       run_cmd "Backend: lint (pint)" \
         "composer install --prefer-dist --no-progress --no-scripts --no-interaction && vendor/bin/pint --test"
       run_cmd "Frontend: lint (oxlint + types)" \
-        "ensure_pnpm && pnpm install --frozen-lockfile && pnpm run lint:oxlint && pnpm run types:check"
+        "\"$REPO_ROOT/scripts/deploy/ensure-pnpm.sh\" && pnpm install --frozen-lockfile && pnpm run lint:oxlint && pnpm run types:check"
       
       if validate_test_environment "$PWD" "$PWD"; then
         run_cmd "Backend: tests (PHPUnit, sqlite :memory:)" \
@@ -720,7 +715,7 @@ EOF
     log_phase "FRONTEND DEPLOY"
 
     run_cmd "Frontend: pnpm install --frozen-lockfile" \
-      "ensure_pnpm && pnpm install --frozen-lockfile"
+      "\"$REPO_ROOT/scripts/deploy/ensure-pnpm.sh\" && pnpm install --frozen-lockfile"
 
     run_cmd "Frontend: build (vue-tsc + vite build)" \
       "pnpm --filter glitchvy-admin build"

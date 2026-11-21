@@ -548,6 +548,56 @@ else
 fi
 
 # ============================================================
+section "scripts/deploy/deploy.sh — the child shell"
+
+# run_cmd executes its commands with `bash -c`, and a child shell does not
+# inherit the functions of the parent. A function called from a command
+# string therefore fails with "command not found" (exit 127).
+
+helper="$REPO_ROOT/scripts/deploy/ensure-pnpm.sh"
+
+if [ -x "$helper" ]; then
+    pass "the pnpm bootstrap is an executable script, not a shell function"
+else
+    fail "the pnpm bootstrap is an executable script, not a shell function" "$helper is missing or not executable"
+fi
+
+if bash -c "\"$helper\" && pnpm --version" >/dev/null 2>&1; then
+    pass "the pnpm bootstrap resolves pnpm inside a child shell"
+else
+    fail "the pnpm bootstrap resolves pnpm inside a child shell" "exit $? running: bash -c '\"$helper\" && pnpm --version'"
+fi
+
+# Every function the script defines must not be called from a command
+# string: the child shell would not know it.
+script_functions="$(grep -oE '^[a-z_][a-z0-9_]*\(\)' "$DEPLOY_SCRIPT" | tr -d '()' | sort -u)"
+command_strings="$(awk '
+    /run_cmd[ \t]|run_remote[ \t]/ {
+        line = $0
+        sub(/^.*run_(cmd|remote)[ \t]+"/, "", line)
+        sub(/^[^"]*"/, "", line)
+        if (line ~ /^"/) { print line; collect = 0; next }
+        collect = 1
+        next
+    }
+    collect && /^[[:space:]]*"/ { print; next }
+    collect { collect = 0 }
+' "$DEPLOY_SCRIPT")"
+
+missing_in_child=""
+for func_name in $script_functions; do
+    if grep -qw -- "$func_name" <<< "$command_strings"; then
+        missing_in_child="$missing_in_child $func_name"
+    fi
+done
+
+if [ -z "$missing_in_child" ]; then
+    pass "no deploy command calls a shell function that the child shell would not inherit"
+else
+    fail "no deploy command calls a shell function that the child shell would not inherit" "functions used in a command string:$missing_in_child"
+fi
+
+# ============================================================
 echo ""
 echo "==========================================="
 echo "  passed: $PASSED"
