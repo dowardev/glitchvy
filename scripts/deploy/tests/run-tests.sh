@@ -562,10 +562,54 @@ else
     fail "the pnpm bootstrap is an executable script, not a shell function" "$helper is missing or not executable"
 fi
 
-if bash -c "\"$helper\" && pnpm --version" >/dev/null 2>&1; then
+# The invocation must work in a child shell. A stub pnpm keeps the check
+# deterministic: it does not depend on pnpm being installed on the machine
+# that runs the suite.
+stub_bin="$(mktemp -d)"
+cat > "$stub_bin/pnpm" <<'STUB'
+#!/usr/bin/env bash
+echo "9.9.9-stub"
+STUB
+chmod +x "$stub_bin/pnpm"
+
+stub_out="$(PATH="$stub_bin:$PATH" bash -c "\"$helper\" && pnpm --version" 2>&1)"
+stub_status=$?
+if [ "$stub_status" -eq 0 ] && grep -q "9.9.9-stub" <<< "$stub_out"; then
     pass "the pnpm bootstrap resolves pnpm inside a child shell"
 else
-    fail "the pnpm bootstrap resolves pnpm inside a child shell" "exit $? running: bash -c '\"$helper\" && pnpm --version'"
+    fail "the pnpm bootstrap resolves pnpm inside a child shell" "exit $stub_status: $stub_out"
+fi
+
+# Without pnpm the bootstrap must fail with a clear message, never with
+# "command not found".
+no_pnpm_dir="$(mktemp -d)"
+
+cat > "$no_pnpm_dir/corepack" <<'STUB'
+#!/usr/bin/env bash
+# A corepack that does nothing: the bootstrap must still fail clearly.
+exit 0
+STUB
+chmod +x "$no_pnpm_dir/corepack"
+
+pnpm_bin="$(command -v pnpm 2>/dev/null || true)"
+pnpm_dir=""
+[ -n "$pnpm_bin" ] && pnpm_dir="$(dirname "$pnpm_bin")"
+
+clean_path="$no_pnpm_dir:$(dirname "$(command -v bash)")"
+old_ifs="$IFS"
+IFS=':'
+for part in $PATH; do
+    [ "$part" = "$pnpm_dir" ] && continue
+    clean_path="$clean_path:$part"
+done
+IFS="$old_ifs"
+
+missing_out="$(PATH="$clean_path" bash -c "\"$helper\"" 2>&1)"
+missing_status=$?
+if [ "$missing_status" -ne 0 ] && grep -qi "pnpm" <<< "$missing_out" && ! grep -q "command not found" <<< "$missing_out"; then
+    pass "the pnpm bootstrap fails with a clear message when pnpm is missing"
+else
+    fail "the pnpm bootstrap fails with a clear message when pnpm is missing" "exit $missing_status: $missing_out"
 fi
 
 # Every function the script defines must not be called from a command
@@ -598,6 +642,8 @@ else
 fi
 
 # ============================================================
+rm -rf "$stub_bin" "$no_pnpm_dir"
+
 echo ""
 echo "==========================================="
 echo "  passed: $PASSED"
