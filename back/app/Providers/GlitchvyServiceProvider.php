@@ -44,7 +44,9 @@ class GlitchvyServiceProvider extends ServiceProvider
     {
         $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
 
-        $this->loadRoutesFrom(__DIR__.'/../../routes/api.php');
+        // routes/api.php is loaded by bootstrap/app.php (withRouting).
+        // Loading it again here would register every route twice and
+        // break `php artisan route:cache` with a duplicated route name.
 
         Route::aliasMiddleware('glitchvy.api', \App\Http\Middleware\AuthenticateProjectApiKey::class);
 
