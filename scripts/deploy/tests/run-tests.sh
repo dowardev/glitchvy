@@ -587,6 +587,8 @@ no_pnpm_dir="$(mktemp -d)"
 cat > "$no_pnpm_dir/corepack" <<'STUB'
 #!/usr/bin/env bash
 # A corepack that does nothing: the bootstrap must still fail clearly.
+# It reports the download prompt setting so the check can verify it.
+echo "PROMPT=${COREPACK_ENABLE_DOWNLOAD_PROMPT:-unset}"
 exit 0
 STUB
 chmod +x "$no_pnpm_dir/corepack"
@@ -610,6 +612,20 @@ if [ "$missing_status" -ne 0 ] && grep -qi "pnpm" <<< "$missing_out" && ! grep -
     pass "the pnpm bootstrap fails with a clear message when pnpm is missing"
 else
     fail "the pnpm bootstrap fails with a clear message when pnpm is missing" "exit $missing_status: $missing_out"
+fi
+
+# Corepack asks before it downloads pnpm the first time. A deploy must
+# never wait for an answer.
+if grep -q "PROMPT=0" <<< "$missing_out"; then
+    pass "the pnpm bootstrap disables the corepack download prompt"
+else
+    fail "the pnpm bootstrap disables the corepack download prompt" "$missing_out"
+fi
+
+if grep -q "export COREPACK_ENABLE_DOWNLOAD_PROMPT=0" "$DEPLOY_SCRIPT"; then
+    pass "the deploy script disables the corepack download prompt"
+else
+    fail "the deploy script disables the corepack download prompt" "COREPACK_ENABLE_DOWNLOAD_PROMPT is not exported"
 fi
 
 # Every function the script defines must not be called from a command
