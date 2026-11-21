@@ -31,7 +31,14 @@ coverage/
 .env
 .env.local
 .env.*.local
+# Every environment file is ignored; only the templates are tracked.
+.env.*
 !.env.example
+!.env.*.example
+
+# Deploy secrets and local overrides
+scripts/deploy/.env
+scripts/deploy.conf
 
 # ============================================================
 # PHP / Composer
