@@ -9,6 +9,10 @@
 # bootstrap lives in an executable script instead of a shell function.
 set -uo pipefail
 
+# Corepack asks before it downloads pnpm the first time. A deploy must
+# never wait for an answer, so the prompt is disabled.
+export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+
 if command -v pnpm >/dev/null 2>&1; then
     exit 0
 fi
