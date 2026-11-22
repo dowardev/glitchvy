@@ -59,6 +59,27 @@ On your **machine**:
 
 `setup.sh` is uploaded by the deploy script, but it is **never executed automatically**: it prompts for secrets (database password, admin password).
 
+### Configuring the server by hand
+
+`setup.sh` is a **helper**, not the only path. The server env file belongs to
+the operator: the deploy never writes it, and it never caches the config, so
+editing the `.env` by hand takes effect on the next request.
+
+```bash
+# 1. The env file (owner-only permissions)
+scp -P 65002 back/.env u902881280@195.179.236.189:/home/u902881280/public_html/glitchvy/back/.env
+ssh -p 65002 u902881280@195.179.236.189 "chmod 600 /home/u902881280/public_html/glitchvy/back/.env"
+
+# 2. The application key
+ssh -p 65002 u902881280@195.179.236.189 "cd /home/u902881280/public_html/glitchvy/back && php artisan key:generate"
+
+# 3. The migrations
+ssh -p 65002 u902881280@195.179.236.189 "cd /home/u902881280/public_html/glitchvy/back && php artisan migrate --force"
+```
+
+`setup.sh` does all of that in one guided run, and it also creates the admin
+user and runs the health checks. Use whichever path fits.
+
 The environment file it writes on the server (database password, `APP_KEY`, mail credentials) and its
 backups are restricted to the owner (`chmod 600`). The host is shared, and with the default
 permissions the file would be readable by any other user of the machine.
