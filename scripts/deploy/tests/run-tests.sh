@@ -704,6 +704,36 @@ fi
 
 rm -rf "$version_dir"
 
+# Every variable written to the env file must be assigned in both paths:
+# the interactive one and the non-interactive one. A variable assigned in
+# only one of them ends the run with "unbound variable" in the other.
+interactive_branch="$(mktemp -d)"
+awk '
+    /if \[ "\$NON_INTERACTIVE" = true \]; then/ { in_non = 1; next }
+    in_non && /^    else$/ { in_int = 1; next }
+    in_int && /^    fi$/ { in_int = 0; in_common = 1; next }
+    in_int { print > "'"$interactive_branch"'/interactive"; next }
+    in_common { print > "'"$interactive_branch"'/common" }
+' "$SETUP_SCRIPT"
+
+env_vars="$(grep -oE 'sed_set "\.env" "[A-Z_]+" "\$[a-z_]+"' "$SETUP_SCRIPT" | grep -oE '\$[a-z_]+' | tr -d '$' | sort -u)"
+
+unassigned_vars=""
+for env_var in $env_vars; do
+    if ! grep -qE "(^|[^a-zA-Z0-9_])${env_var}=" "$interactive_branch/interactive" \
+        && ! grep -qE "(^|[^a-zA-Z0-9_])${env_var}=" "$interactive_branch/common"; then
+        unassigned_vars="$unassigned_vars $env_var"
+    fi
+done
+
+if [ -z "$unassigned_vars" ]; then
+    pass "the interactive setup assigns every variable it writes to the env file"
+else
+    fail "the interactive setup assigns every variable it writes to the env file" "not assigned in the interactive path:$unassigned_vars"
+fi
+
+rm -rf "$interactive_branch"
+
 # ============================================================
 rm -rf "$stub_bin" "$no_pnpm_dir"
 
