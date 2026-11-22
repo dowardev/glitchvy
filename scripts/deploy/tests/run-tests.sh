@@ -258,44 +258,41 @@ else
 fi
 
 # ============================================================
-section "setup.sh — the destructive migration guard"
+section "the migrations — the data safety lives in the schema"
 # ============================================================
-load_function "$SETUP_SCRIPT" "assert_no_destructive_migration" "$env_dir/guard.sh"
-cat >> "$env_dir/guard.sh" <<'EOF'
-log_error() { echo "ERR: $1"; }
-log_warn()  { echo "WARN: $1"; }
-EOF
+# The runtime guard (ALLOW_DESTRUCTIVE_MIGRATIONS) is gone: it read the
+# SQL text and could not tell a table rebuild that copies the rows from
+# one that drops them. The guarantee is now a rule on the migrations:
+# a migration that drops a table copies the rows first.
+migrations_dir="$REPO_ROOT/back/database/migrations"
 
-# shellcheck source=/dev/null
-( source "$env_dir/guard.sh"
-  assert_no_destructive_migration "alter table users drop column name" ) >/dev/null 2>&1
-status=$?
-if [ "$status" -ne 0 ]; then
-    pass "blocks a destructive migration by default"
+unsafe_migrations=""
+while IFS= read -r migration_file; do
+    [ -n "$migration_file" ] || continue
+    if ! grep -qiE "drop[[:space:]]+table" "$migration_file"; then
+        continue
+    fi
+    # The copy has to come before the drop.
+    copy_line="$(grep -niE "insert[[:space:]]+into" "$migration_file" | head -1 | cut -d: -f1)"
+    drop_line="$(grep -niE "drop[[:space:]]+table" "$migration_file" | head -1 | cut -d: -f1)"
+    if [ -z "$copy_line" ] || [ -z "$drop_line" ] || [ "$copy_line" -gt "$drop_line" ]; then
+        unsafe_migrations="$unsafe_migrations $(basename "$migration_file")"
+    fi
+done < <(find "$migrations_dir" -name '*.php' 2>/dev/null)
+
+if [ -z "$unsafe_migrations" ]; then
+    pass "every migration that drops a table copies the rows before dropping it"
 else
-    fail "blocks a destructive migration by default" "it exited with 0"
+    fail "every migration that drops a table copies the rows before dropping it" "without a row copy:$unsafe_migrations"
 fi
 
-# shellcheck source=/dev/null
-( source "$env_dir/guard.sh"
-  ALLOW_DESTRUCTIVE_MIGRATIONS=1
-  export ALLOW_DESTRUCTIVE_MIGRATIONS
-  assert_no_destructive_migration "alter table users drop column name" ) >/dev/null 2>&1
-status=$?
-if [ "$status" -eq 0 ]; then
-    pass "allows a destructive migration with ALLOW_DESTRUCTIVE_MIGRATIONS=1"
+# The external switch must not come back.
+flag_hits="$(grep -rl "ALLOW_DESTRUCTIVE_MIGRATIONS" \
+    "$SETUP_SCRIPT" "$DEPLOY_SCRIPT" "$REPO_ROOT/.github/workflows" 2>/dev/null | tr '\n' ' ')"
+if [ -z "$flag_hits" ]; then
+    pass "no script or workflow uses the external destructive migration switch"
 else
-    fail "allows a destructive migration with ALLOW_DESTRUCTIVE_MIGRATIONS=1" "exit code was $status"
-fi
-
-# shellcheck source=/dev/null
-( source "$env_dir/guard.sh"
-  assert_no_destructive_migration "create table sessions (id bigint)" ) >/dev/null 2>&1
-status=$?
-if [ "$status" -eq 0 ]; then
-    pass "allows a regular migration"
-else
-    fail "allows a regular migration" "exit code was $status"
+    fail "no script or workflow uses the external destructive migration switch" "$flag_hits"
 fi
 
 # ============================================================

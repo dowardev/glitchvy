@@ -125,7 +125,7 @@ The script runs the checks (backend PHPUnit, SDK `tsc` + vitest, SPA `vue-tsc` +
 ./scripts/deploy/deploy.sh --migrate
 ```
 
-The guard reads the SQL that `artisan migrate --pretend` would run and refuses to apply a destructive one (`DROP TABLE`, `DROP COLUMN`, `TRUNCATE`, `RENAME COLUMN`) unless you set `ALLOW_DESTRUCTIVE_MIGRATIONS=1` on purpose.
+The pending migrations are printed before they run, so you can see exactly what is about to be applied. The data safety lives in the migrations themselves: a migration that rebuilds a table (the SQLite table-rebuild pattern) copies the rows before dropping the old table, and the foreign keys carry their own delete semantics (`nullOnDelete` on the project owner, `ON DELETE CASCADE` on the reports). The tooling suite checks that rule on every migration, so a `DROP TABLE` without a row copy fails the CI.
 
 Options:
 
@@ -160,7 +160,7 @@ Pushing a semver tag (`v1.2.3`, `v1.2.3-rc.1`, `v1.2.3-dryrun.1`) runs the GitHu
 workflow **Deploy** (`.github/workflows/deploy.yml`) with the deploy jobs:
 
 - `backend_deploy` — ships `back/` (without `vendor`, `.env*`, the local sqlite database and the generated caches), then runs `composer install --no-dev`, `config:cache` and `route:cache` on the server. It does **not** migrate.
-- `backend_migrate` — **manual** job: runs the pending migrations with the same destructive-migration guard as `--migrate`. Start it explicitly after reviewing what the migration does. Requires `ALLOW_DESTRUCTIVE_MIGRATIONS=1` to apply a destructive migration.
+- `backend_migrate` — **manual** job: prints the pending migrations and then runs them. Start it explicitly after reviewing what the migration does.
 - `frontend_deploy` — builds the SPA and ships `front/dist/`.
 
 The workflow also provides two **manual** rollback jobs (`rollback_backend`, `rollback_frontend`) that redeploy the previous stable tag.
@@ -178,7 +178,6 @@ Required GitHub repository credentials (Settings → Secrets and variables → A
 | `SSH_KNOWN_HOSTS` | Secret | (known_hosts line) | Loaded in GitHub |
 | `DEPLOY_PATH_BACKEND` | Variable | `/home/u902881280/public_html/glitchvy/back` | Loaded in GitHub |
 | `DEPLOY_PATH_FRONTEND` | Variable | `/home/u902881280/public_html/glitchvy` | Loaded in GitHub |
-| `ALLOW_DESTRUCTIVE_MIGRATIONS` | Variable | `0` (default) | Loaded in GitHub |
 
 > **Note:** In GitHub Actions the private key is always provided as the **content** of the secret (not a file path). The installation block accepts both shapes for compatibility, but the GitHub secret holds the key content directly.
 
