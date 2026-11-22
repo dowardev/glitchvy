@@ -63,6 +63,11 @@ The environment file it writes on the server (database password, `APP_KEY`, mail
 backups are restricted to the owner (`chmod 600`). The host is shared, and with the default
 permissions the file would be readable by any other user of the machine.
 
+Every run keeps a timestamped backup of the env files (`.bak.<timestamp>`, the last five) before
+touching them. If the setup fails, it **undoes the partial write**: the env file is restored from
+its backup, or removed when the run created it and there was no previous state. A half written env
+file is worse than none, because the next run reads it as the previous values.
+
 ```bash
 ssh -p 65002 u902881280@195.179.236.189
 cd /home/u902881280/public_html/glitchvy
