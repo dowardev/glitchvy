@@ -659,25 +659,44 @@ generate_app_key() {
     cd "$SCRIPT_DIR"
 }
 
-# The setup runs the migrations unattended. The data safety lives in the
-# migrations themselves: a migration that rebuilds a table copies the rows
-# before dropping the old one (see the migration checks in the tooling
-# suite), and the foreign keys carry their own delete semantics.
+# The setup runs the migrations unattended, so a pending migration that
+# drops a table or a column must not run without a human in the loop. The
+# operator opts in explicitly with ALLOW_DESTRUCTIVE_MIGRATIONS=1.
+assert_no_destructive_migration() {
+    local pending="$1"
+    # The operations that can lose data or break the schema: they drop a
+    # table, a column, an index, a constraint or a foreign key, they empty
+    # a table, or they rename a table or a column.
+    # The deploy script uses the same list: keep both in sync.
+    local destructive_operations='drop table|drop column|drop index|drop constraint|drop foreign key|truncate|rename column|rename table'
+    if ! printf '%s' "$pending" | grep -qiE "$destructive_operations"; then
+        return 0
+    fi
+    if [ "${ALLOW_DESTRUCTIVE_MIGRATIONS:-}" != "1" ]; then
+        log_error "Destructive migration detected. Review it, then re-run with ALLOW_DESTRUCTIVE_MIGRATIONS=1 to apply it."
+        return 1
+    fi
+    log_warn "Applying a destructive migration (ALLOW_DESTRUCTIVE_MIGRATIONS=1)"
+    return 0
+}
+
 migrate_db() {
     CURRENT_STEP=$((CURRENT_STEP + 1))
     log_info "Step $CURRENT_STEP: Running database migrations..."
 
     cd "$BACK_DIR"
     local pending
-    # The pending migrations are shown before they run, so the operator can
-    # see what the deploy is about to apply.
+    # If the dry run fails, the pending migrations are unknown: the guard
+    # cannot decide, so the setup stops instead of running them blind.
     # --force: in production Laravel asks for a confirmation and cancels
     # the command without it.
     if ! pending=$(php artisan migrate --pretend --force --no-ansi 2>/dev/null); then
         log_error "Cannot read the pending migrations (migrate --pretend failed)"
         exit 5
     fi
-    log_debug "Pending migrations:$pending"
+    if ! assert_no_destructive_migration "$pending"; then
+        exit 5
+    fi
     php artisan migrate --force || { log_error "Migration failed"; exit 5; }
     link_storage
     log_ok "Database migrated"

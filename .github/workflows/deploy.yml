@@ -275,7 +275,8 @@ jobs:
 
   # ============================================================
   # Backend migrations — MANUAL, never automatic
-  # Shows the pending migrations before applying them.
+  # Runs only with ALLOW_DESTRUCTIVE_MIGRATIONS=1 and after the
+  # dry-run guard (migrate --pretend --force) passes.
   # ============================================================
   backend_migrate:
     name: backend_migrate
@@ -336,12 +337,13 @@ jobs:
           chmod 600 ~/.ssh/config
           eval $(ssh-agent -s) && ssh-add ~/.ssh/id_rsa
 
-      - name: Run the pending migrations
+      - name: Run migrations with destructive guard
         env:
           SSH_PORT: ${{ vars.SSH_PORT }}
           SSH_USER: ${{ vars.SSH_USER }}
           SSH_HOST: ${{ vars.SSH_HOST }}
           DEPLOY_PATH_BACKEND: ${{ vars.DEPLOY_PATH_BACKEND }}
+          ALLOW_DESTRUCTIVE_MIGRATIONS: ${{ vars.ALLOW_DESTRUCTIVE_MIGRATIONS }}
         run: |
           ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
             "$SSH_USER@$SSH_HOST" "
@@ -351,8 +353,13 @@ jobs:
               echo 'Cannot read the pending migrations (migrate --pretend failed).' >&2
               exit 1
             }
-            echo 'Pending migrations:'
-            echo \"\$PENDING\"
+            if echo \"\$PENDING\" | grep -qiE 'drop table|drop column|drop index|drop constraint|drop foreign key|truncate|rename column|rename table'; then
+              if [ \"\${ALLOW_DESTRUCTIVE_MIGRATIONS:-}\" != '1' ]; then
+                echo 'Destructive migration detected. Review it, then set ALLOW_DESTRUCTIVE_MIGRATIONS=1 as a repository variable to apply it.' >&2
+                exit 1
+              fi
+              echo 'WARNING: applying a destructive migration (ALLOW_DESTRUCTIVE_MIGRATIONS=1)'
+            fi
             php artisan migrate --force
           "
 

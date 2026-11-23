@@ -829,11 +829,11 @@ deploy_docs() {
 # ============================================================
 # Migrations (opt-in) — never run unattended
 # ============================================================
-# The deploy never migrates the production database on its own: the operator
-# asks for it explicitly (--migrate). The data safety lives in the
-# migrations themselves: a migration that rebuilds a table copies the rows
-# before dropping the old one (see the migration checks in the tooling
-# suite), and the foreign keys carry their own delete semantics.
+# The deploy never migrates the production database on its own: a pending
+# migration can drop a table or a column, and that must not happen without
+# a human in the loop. The operator asks for it explicitly (--migrate), and
+# even then the guard refuses to run a destructive migration unless
+# ALLOW_DESTRUCTIVE_MIGRATIONS=1 is set on purpose.
 run_migrations() {
   if [[ "$RUN_MIGRATIONS" != "true" ]]; then
     log_debug "Migrations skipped (not requested with --migrate)"
@@ -850,8 +850,14 @@ PENDING=\$(php artisan migrate --pretend --force --no-ansi 2>/dev/null) || {
   echo "Cannot read the pending migrations (migrate --pretend failed)." >&2
   exit 1
 }
-echo "Pending migrations:"
-echo "\$PENDING"
+# The same list as in setup.sh: keep both in sync.
+if echo "\$PENDING" | grep -qiE 'drop table|drop column|drop index|drop constraint|drop foreign key|truncate|rename column|rename table'; then
+  if [ "\${ALLOW_DESTRUCTIVE_MIGRATIONS:-}" != "1" ]; then
+    echo "Destructive migration detected. Review it, then re-run with ALLOW_DESTRUCTIVE_MIGRATIONS=1 to apply it." >&2
+    exit 1
+  fi
+  echo "WARNING: applying a destructive migration (ALLOW_DESTRUCTIVE_MIGRATIONS=1)"
+fi
 ${BACKEND_MIGRATE_CMD:-php artisan migrate --force}
 EOF
 )
