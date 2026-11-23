@@ -258,52 +258,6 @@ else
 fi
 
 # ============================================================
-section "setup.sh — a failure undoes the partial env file"
-# ============================================================
-# A half written env file is worse than none: the next run reads it as
-# the previous values, so the partial write has to be undone.
-load_function "$SETUP_SCRIPT" "remember_env_file" "$env_dir/rollback_remember.sh"
-load_function "$SETUP_SCRIPT" "restore_env_files" "$env_dir/rollback_restore.sh"
-# Each extracted file carries the readonly exit codes: keep them only once.
-grep -v "^readonly EXIT_" "$env_dir/rollback_restore.sh" > "$env_dir/rollback_restore_clean.sh"
-cat "$env_dir/rollback_remember.sh" "$env_dir/rollback_restore_clean.sh" > "$env_dir/rollback.sh"
-cat >> "$env_dir/rollback.sh" <<'EOF'
-log_error() { echo "ERR: $1"; }
-ROLLBACK_FILES=()
-ROLLBACK_BACKUPS=()
-EOF
-
-rollback_dir="$(mktemp -d)"
-printf 'APP_KEY=old\n' > "$rollback_dir/.env"
-cp "$rollback_dir/.env" "$rollback_dir/.env.bak.20260101_000000"
-
-# shellcheck source=/dev/null
-out="$( ( source "$env_dir/rollback.sh"
-  remember_env_file "$rollback_dir/.env" "$rollback_dir/.env.bak.20260101_000000"
-  printf 'APP_KEY=half-written\n' > "$rollback_dir/.env"
-  restore_env_files ) 2>&1 )"
-restored_content="$(cat "$rollback_dir/.env" 2>/dev/null)"
-if [ "$restored_content" = "APP_KEY=old" ]; then
-    pass "a failure restores the env file from its backup"
-else
-    fail "a failure restores the env file from its backup" "content was: $restored_content / $out"
-fi
-
-# A file created by this run has no previous state: it has to go away.
-printf 'APP_KEY=fresh\n' > "$rollback_dir/.env.new"
-# shellcheck source=/dev/null
-( source "$env_dir/rollback.sh"
-  remember_env_file "$rollback_dir/.env.new" ""
-  restore_env_files ) >/dev/null 2>&1
-if [ ! -f "$rollback_dir/.env.new" ]; then
-    pass "a failure removes an env file that the run created"
-else
-    fail "a failure removes an env file that the run created" "the file is still there"
-fi
-
-rm -rf "$rollback_dir"
-
-# ============================================================
 section "the migrations — the data safety lives in the schema"
 # ============================================================
 # The runtime guard (ALLOW_DESTRUCTIVE_MIGRATIONS) is gone: it read the
