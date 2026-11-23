@@ -474,25 +474,19 @@ configure_backend() {
 
         mail_mailer="$(get_env_default MAIL_MAILER "$example_file")"
         mail_port="$(get_env_default MAIL_PORT "$example_file")"
-        local default_mail_host default_mail_username default_mail_password default_mail_from_address
+        local default_mail_host default_mail_username default_mail_password
         default_mail_host="${prev_mail_host:-$(get_env_default MAIL_HOST "$example_file")}"
         default_mail_username="${prev_mail_username:-$(get_env_default MAIL_USERNAME "$example_file")}"
         default_mail_password="${prev_mail_password:-$(get_env_default MAIL_PASSWORD "$example_file")}"
-        default_mail_from_address="${prev_mail_from_address:-$(get_env_default MAIL_FROM_ADDRESS "$example_file" | tr -d '"')}"
-        if [ -z "$default_mail_from_address" ]; then
-            default_mail_from_address="noreply@$(echo "$app_url" | sed -E 's|^https?://||; s|/.*$||')"
-        fi
 
         if [ "$mail_mailer" = "smtp" ]; then
             mail_host="$(ask "Mail host" "$default_mail_host")"
             mail_username="$(ask "Mail username" "$default_mail_username")"
             mail_password="$(ask_secret "Mail password" "$default_mail_password")"
-            mail_from_address="$(ask "Mail from address" "$default_mail_from_address")"
         else
             mail_host="$default_mail_host"
             mail_username="$default_mail_username"
             mail_password="$default_mail_password"
-            mail_from_address="$default_mail_from_address"
         fi
 
         retention_days="$(ask "Error retention (days)" "${prev_retention_days:-30}")"
