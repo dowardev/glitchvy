@@ -102,11 +102,6 @@ DEPLOY_DIR="$REPO_ROOT/scripts/deploy"
 ENV_FILE="$DEPLOY_DIR/.env"
 CONF_FILE="$DEPLOY_DIR/deploy.conf"
 
-# The deploy must never wait for an answer: corepack asks before it
-# downloads pnpm the first time, which would hang a deploy (and every
-# CI job) on a prompt nobody can answer.
-export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-
 log_info "Repository root: $REPO_ROOT"
 [[ "$DRY_RUN" == "true" ]] && log_warn "DRY-RUN MODE — no changes will be made"
 [[ "$VERBOSE" == "true" ]] && log_info "Verbose output enabled"
