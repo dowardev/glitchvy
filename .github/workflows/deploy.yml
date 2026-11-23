@@ -171,6 +171,7 @@ jobs:
             mkdir -p storage/framework/views storage/framework/cache/data storage/framework/sessions storage/app/private &&
             chmod -R 775 storage bootstrap/cache &&
             composer install --no-dev --optimize-autoloader --no-interaction &&
+            php artisan config:cache &&
             php artisan route:cache &&
             rm /tmp/backend.tar.gz
           "
@@ -491,6 +492,7 @@ jobs:
             mkdir -p storage/framework/views storage/framework/cache/data storage/framework/sessions storage/app/private &&
             chmod -R 775 storage bootstrap/cache &&
             composer install --no-dev --optimize-autoloader --no-interaction &&
+            php artisan config:cache &&
             php artisan route:cache &&
             rm /tmp/backend-rollback.tar.gz
           "

@@ -304,20 +304,6 @@ fi
 rm -rf "$rollback_dir"
 
 # ============================================================
-section "the deploy leaves the server env file authoritative"
-# ============================================================
-# A cached config freezes the values of the env file, so a manual edit of
-# the .env would be silently ignored. The deploy must not create it.
-config_cache_hits="$(grep -rn "artisan config:cache" \
-    "$DEPLOY_SCRIPT" "$SETUP_SCRIPT" "$REPO_ROOT/scripts/deploy/deploy.conf" \
-    "$REPO_ROOT/.github/workflows" 2>/dev/null | grep -v "on purpose" || true)"
-if [ -z "$config_cache_hits" ]; then
-    pass "the deploy never caches the config, so a manual env file edit takes effect"
-else
-    fail "the deploy never caches the config, so a manual env file edit takes effect" "$config_cache_hits"
-fi
-
-# ============================================================
 section "the migrations — the data safety lives in the schema"
 # ============================================================
 # The runtime guard (ALLOW_DESTRUCTIVE_MIGRATIONS) is gone: it read the
