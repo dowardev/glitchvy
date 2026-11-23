@@ -107,12 +107,6 @@ CONF_FILE="$DEPLOY_DIR/deploy.conf"
 # CI job) on a prompt nobody can answer.
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 
-# The deploy runs with the pnpm installed on the host. pnpm 10+ would
-# otherwise delegate to corepack to run the version pinned in
-# packageManager, downloading it on the fly; the deploy must not depend
-# on that. The version drift is reported by check_pnpm_version.
-export npm_config_manage_package_manager_versions=false
-
 log_info "Repository root: $REPO_ROOT"
 [[ "$DRY_RUN" == "true" ]] && log_warn "DRY-RUN MODE — no changes will be made"
 [[ "$VERBOSE" == "true" ]] && log_info "Verbose output enabled"
@@ -508,25 +502,6 @@ run_remote() {
 # child shell does not inherit the functions of the parent, so a function
 # called from a command string would fail with "command not found".
 
-# Report the pnpm version drift between the host and the version the
-# repository pins. The deploy does not fail on it: the host tooling is
-# the operator's choice, and the lockfile is compatible.
-check_pnpm_version() {
-  local pinned current
-  pinned="$(sed -n 's/.*"packageManager"[[:space:]]*:[[:space:]]*"pnpm@\([^"]*\)".*/\1/p' "$REPO_ROOT/package.json" 2>/dev/null | head -1)"
-  current="$(pnpm --version 2>/dev/null || true)"
-
-  if [[ -z "$pinned" || -z "$current" ]]; then
-    return 0
-  fi
-
-  if [[ "$pinned" != "$current" ]]; then
-    log_warn "pnpm $current is running, the repository pins pnpm@$pinned."
-    log_warn "The deploy continues with the host pnpm. To match the repository:"
-    log_warn "  corepack enable && corepack install pnpm@$pinned"
-  fi
-}
-
 # ============================================================
 # Test Environment Validation
 # ============================================================
@@ -654,7 +629,6 @@ run_checks() {
 
       if [[ "$DEPLOY_FRONTEND" == "true" ]]; then
         log_phase "FRONTEND CHECKS"
-        check_pnpm_version
         run_cmd "Frontend: typecheck (vue-tsc)" \
           "cd $FRONTEND_DIR && \"$REPO_ROOT/scripts/deploy/ensure-pnpm.sh\" && pnpm exec vue-tsc --noEmit"
         run_cmd "Frontend: unit tests (vitest --run)" \
@@ -745,7 +719,6 @@ EOF
   if [[ "$DEPLOY_FRONTEND" == "true" ]]; then
     log_phase "FRONTEND DEPLOY"
 
-    check_pnpm_version
     run_cmd "Frontend: pnpm install --frozen-lockfile" \
       "\"$REPO_ROOT/scripts/deploy/ensure-pnpm.sh\" && pnpm install --frozen-lockfile"
 

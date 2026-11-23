@@ -657,53 +657,6 @@ else
     fail "no deploy command calls a shell function that the child shell would not inherit" "functions used in a command string:$missing_in_child"
 fi
 
-# The deploy runs with the pnpm installed on the host: pnpm 10+ would
-# otherwise delegate to corepack to run the pinned version, downloading it
-# on the fly and asking for confirmation.
-if grep -q "npm_config_manage_package_manager_versions=false" "$DEPLOY_SCRIPT"; then
-    pass "the deploy script uses the host pnpm instead of delegating to corepack"
-else
-    fail "the deploy script uses the host pnpm instead of delegating to corepack" "manage-package-manager-versions is not disabled"
-fi
-
-# The version drift between the host pnpm and the pinned one is reported.
-version_dir="$(mktemp -d)"
-mkdir -p "$version_dir/bin"
-load_function "$DEPLOY_SCRIPT" "check_pnpm_version" "$version_dir/check_pnpm_version.sh"
-cat >> "$version_dir/check_pnpm_version.sh" <<'EOF'
-log_warn() { echo "WARN: $1"; }
-log_info() { echo "INFO: $1"; }
-EOF
-
-cat > "$version_dir/bin/pnpm" <<'EOF'
-#!/usr/bin/env bash
-echo "10.34.9"
-EOF
-chmod +x "$version_dir/bin/pnpm"
-
-drift_out="$( ( source "$version_dir/check_pnpm_version.sh"; PATH="$version_dir/bin:$PATH"; check_pnpm_version ) 2>&1 )"
-if grep -q "10.34.9" <<< "$drift_out" && grep -q "pins pnpm@" <<< "$drift_out"; then
-    pass "the deploy reports a pnpm version drift with the version the repository pins"
-else
-    fail "the deploy reports a pnpm version drift with the version the repository pins" "$drift_out"
-fi
-
-pinned_version="$(sed -n 's/.*"packageManager"[[:space:]]*:[[:space:]]*"pnpm@\([^"]*\)".*/\1/p' "$REPO_ROOT/package.json" | head -1)"
-cat > "$version_dir/bin/pnpm" <<EOF
-#!/usr/bin/env bash
-echo "$pinned_version"
-EOF
-chmod +x "$version_dir/bin/pnpm"
-
-same_out="$( ( source "$version_dir/check_pnpm_version.sh"; PATH="$version_dir/bin:$PATH"; check_pnpm_version ) 2>&1 )"
-if [ -z "$same_out" ]; then
-    pass "the deploy stays quiet when the host pnpm matches the pinned version"
-else
-    fail "the deploy stays quiet when the host pnpm matches the pinned version" "$same_out"
-fi
-
-rm -rf "$version_dir"
-
 # ============================================================
 rm -rf "$stub_bin" "$no_pnpm_dir"
 
