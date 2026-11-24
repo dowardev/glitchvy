@@ -100,8 +100,8 @@ What it does:
 1. Checks the prerequisites (PHP version, Composer, Node/pnpm).
 2. Creates `back/.env` from `back/.env.production.example` (backing up the previous one) and asks for:
    - app name, backend URL (`APP_URL`) and admin SPA URL (`FRONTEND_URL`);
-   - the database (`sqlite` — the default — or `mysql`);
-   - the mail settings and the `GLITCHVY_*` tunables (retention, storage disk, rate limit).
+   - the database (`mysql` — the default — or `sqlite`);
+   - the mail settings. The `GLITCHVY_*` tunables (retention, storage disk, rate limit) are not asked for: they keep the defaults of `config/glitchvy.php`.
    From the SPA URL it derives `SANCTUM_STATEFUL_DOMAINS` and `CORS_ALLOWED_ORIGINS`.
 3. Generates `APP_KEY` (`php artisan key:generate`).
 4. Runs the migrations (`php artisan migrate --force`) and links the public storage.
@@ -244,9 +244,9 @@ The migrations are **not** reverted automatically: check the release notes befor
 | `DB_CONNECTION` | `sqlite` or `mysql` (with `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`). |
 | `SANCTUM_STATEFUL_DOMAINS` | Derived from `FRONTEND_URL` — the host allowed to authenticate with a cookie. |
 | `CORS_ALLOWED_ORIGINS` | Derived from `FRONTEND_URL`. |
-| `GLITCHVY_RETENTION_DAYS` | Days an error report is kept (default `30`). |
-| `GLITCHVY_STORAGE_DISK` | Disk used for the screenshots (default `private`). |
-| `GLITCHVY_RATE_LIMIT` | Ingest throttle, `requests,minutes` (default `60,1`). |
+| `GLITCHVY_RETENTION_DAYS` | Days an error report is kept (default `30`). The setup does not ask for it. |
+| `GLITCHVY_STORAGE_DISK` | Disk used for the screenshots (default `private`). The setup does not ask for it. |
+| `GLITCHVY_RATE_LIMIT` | Ingest throttle, `requests,minutes` (default `60,1`). The setup does not ask for it. |
 | `GLITCHVY_LOGIN_RATE_LIMIT` | Login throttle (default `5,1`). |
 | `GLITCHVY_CSRF_RATE_LIMIT` | CSRF endpoint throttle (default `60,1`). |
 

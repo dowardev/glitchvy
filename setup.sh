@@ -189,7 +189,17 @@ sed_set() {
         escaped_val="\"${escaped_val}\""
     fi
     if grep -qE "^\s*${key}=" "$file" 2>/dev/null; then
+        # The key is already active: replace its value where it is.
         if ! sed -i "s|^[[:space:]]*${key}=.*|${key}=${escaped_val}|" "$file"; then
+            log_error "Cannot write '$key' to $file"
+            return $EXIT_WRITE_ERROR
+        fi
+    elif grep -qE "^\s*#\s*${key}=" "$file" 2>/dev/null; then
+        # The key exists only as a commented line: the Laravel template
+        # ships the database block commented out. Activate that line in
+        # place. Appending a second copy would leave the file with two
+        # sources of truth for the same variable, and the first one wins.
+        if ! sed -i "s|^[[:space:]]*#[[:space:]]*${key}=.*|${key}=${escaped_val}|" "$file"; then
             log_error "Cannot write '$key' to $file"
             return $EXIT_WRITE_ERROR
         fi
@@ -383,7 +393,6 @@ configure_backend() {
     local prev_app_name prev_app_url prev_frontend_url prev_app_env prev_app_debug
     local prev_db_connection prev_db_host prev_db_port prev_db_database prev_db_username prev_db_password
     local prev_mail_host prev_mail_username prev_mail_password prev_mail_from_address
-    local prev_retention_days prev_storage_disk prev_rate_limit
     if [ -f ".env" ]; then
         prev_app_name="$(unquote_env_val "$(get_env_default APP_NAME ".env")")"
         prev_app_url="$(unquote_env_val "$(get_env_default APP_URL ".env")")"
@@ -400,9 +409,6 @@ configure_backend() {
         prev_mail_username="$(unquote_env_val "$(get_env_default MAIL_USERNAME ".env")")"
         prev_mail_password="$(unquote_env_val "$(get_env_default MAIL_PASSWORD ".env")")"
         prev_mail_from_address="$(unquote_env_val "$(get_env_default MAIL_FROM_ADDRESS ".env")")"
-        prev_retention_days="$(unquote_env_val "$(get_env_default GLITCHVY_RETENTION_DAYS ".env")")"
-        prev_storage_disk="$(unquote_env_val "$(get_env_default GLITCHVY_STORAGE_DISK ".env")")"
-        prev_rate_limit="$(unquote_env_val "$(get_env_default GLITCHVY_RATE_LIMIT ".env")")"
     fi
 
     env_backup="$(backup_file ".env" | tail -1)"
@@ -417,7 +423,6 @@ configure_backend() {
     local app_name app_url frontend_url app_env app_debug env_backup
     local db_connection db_host db_port db_database db_username db_password
     local mail_mailer mail_host mail_port mail_username mail_password mail_from_address
-    local retention_days storage_disk rate_limit
     local sanctum_stateful_domains cors_allowed_origins
 
     if [ "$NON_INTERACTIVE" = true ]; then
@@ -449,15 +454,12 @@ configure_backend() {
         mail_username="${GLITCHVY_MAIL_USERNAME:-${prev_mail_username:-$(get_env_default MAIL_USERNAME "$example_file")}}"
         mail_password="${GLITCHVY_MAIL_PASSWORD:-${prev_mail_password:-$(get_env_default MAIL_PASSWORD "$example_file")}}"
         mail_from_address="${GLITCHVY_MAIL_FROM_ADDRESS:-${prev_mail_from_address:-$(get_env_default MAIL_FROM_ADDRESS "$example_file" | tr -d '"')}}"
-        retention_days="${GLITCHVY_RETENTION_DAYS:-${prev_retention_days:-30}}"
-        storage_disk="${GLITCHVY_STORAGE_DISK:-${prev_storage_disk:-private}}"
-        rate_limit="${GLITCHVY_RATE_LIMIT:-${prev_rate_limit:-60,1}}"
     else
         local default_app_name default_app_url default_frontend_url default_db_connection
         default_app_name="${prev_app_name:-$(grep -E "^APP_NAME=" "$example_file" | cut -d= -f2- | tr -d '"' || echo "Glitchvy")}"
         default_app_url="${prev_app_url:-$(grep -E "^APP_URL=" "$example_file" | cut -d= -f2- || echo "http://localhost:8000")}"
         default_frontend_url="${prev_frontend_url:-$(grep -E "^FRONTEND_URL=" "$example_file" | cut -d= -f2- || echo "http://localhost:8100")}"
-        default_db_connection="${prev_db_connection:-sqlite}"
+        default_db_connection="${prev_db_connection:-mysql}"
 
         app_name="$(ask "App name" "$default_app_name")"
         sed_set ".env" "APP_NAME" "$app_name" || die $?
@@ -530,10 +532,6 @@ configure_backend() {
             mail_password="$default_mail_password"
             mail_from_address="$default_mail_from_address"
         fi
-
-        retention_days="$(ask "Error retention (days)" "${prev_retention_days:-30}")"
-        storage_disk="$(ask "Screenshot storage disk" "${prev_storage_disk:-private}")"
-        rate_limit="$(ask "Ingest rate limit (requests,minutes)" "${prev_rate_limit:-60,1}")"
     fi
 
     # Sanctum's stateful domains and the CORS allow-list are derived from the
@@ -565,9 +563,6 @@ configure_backend() {
     sed_set ".env" "MAIL_USERNAME" "$mail_username" || die $?
     sed_set ".env" "MAIL_PASSWORD" "$mail_password" || die $?
     sed_set ".env" "MAIL_FROM_ADDRESS" "$mail_from_address" || die $?
-    sed_set ".env" "GLITCHVY_RETENTION_DAYS" "$retention_days" || die $?
-    sed_set ".env" "GLITCHVY_STORAGE_DISK" "$storage_disk" || die $?
-    sed_set ".env" "GLITCHVY_RATE_LIMIT" "$rate_limit" || die $?
     # SSO integration (planned, tracked in odd/tasks/deploy-tooling.md):
     # the deploy can carry the SSO credentials so
     # the server env file is ready when the server-side SSO client lands.
@@ -713,7 +708,8 @@ migrate_db() {
         log_error "Cannot read the pending migrations (migrate --pretend failed)"
         exit 5
     fi
-    log_debug "Pending migrations:$pending"
+    log_info "Pending migrations:"
+    printf '%s\n' "$pending" | sed 's/^/    /'
     php artisan migrate --force || { log_error "Migration failed"; exit 5; }
     link_storage
     log_ok "Database migrated"
