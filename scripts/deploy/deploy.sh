@@ -107,11 +107,16 @@ CONF_FILE="$DEPLOY_DIR/deploy.conf"
 # CI job) on a prompt nobody can answer.
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 
-# The deploy runs with the pnpm installed on the host. pnpm 10+ would
-# otherwise delegate to corepack to run the version pinned in
-# packageManager, downloading it on the fly; the deploy must not depend
-# on that. The version drift is reported by check_pnpm_version.
-export npm_config_manage_package_manager_versions=false
+# The deploy uses the pnpm version the repository pins in
+# packageManager. pnpm switches to it on its own: it downloads the
+# pinned version once, without asking anything, and then every command
+# runs with the version the lockfile was written for.
+#
+# Forcing the host pnpm instead (manage-package-manager-versions=false)
+# made an older pnpm try to purge the node_modules tree that the
+# pinned pnpm had built, and that purge aborts when there is no TTY to
+# ask on.
+export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 
 log_info "Repository root: $REPO_ROOT"
 [[ "$DRY_RUN" == "true" ]] && log_warn "DRY-RUN MODE — no changes will be made"
@@ -522,8 +527,12 @@ check_pnpm_version() {
 
   if [[ "$pinned" != "$current" ]]; then
     log_warn "pnpm $current is running, the repository pins pnpm@$pinned."
-    log_warn "The deploy continues with the host pnpm. To match the repository:"
-    log_warn "  corepack enable && corepack install pnpm@$pinned"
+    log_warn "The modules tree is rebuilt with the running pnpm."
+    # A different pnpm wants to purge the modules tree of the pinned
+    # one, and that purge asks for a confirmation. Without a TTY the
+    # question cannot be answered and the install aborts, so the
+    # non-interactive mode answers it: the tree is rebuilt.
+    export CI=true
   fi
 }
 

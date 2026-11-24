@@ -167,6 +167,30 @@ else
     fail "writes a valid value into the env file" "content: $(cat "$env_file")"
 fi
 
+# A key that the template ships commented out must be activated where it
+# is. Appending a second copy leaves the file with two sources of truth
+# for the same variable, and the first one wins.
+commented_file="$env_dir/commented.env"
+printf 'APP_NAME=Glitchvy\n# DB_HOST=127.0.0.1\n# DB_USERNAME=root\n' > "$commented_file"
+( source "$env_dir/sed_set.sh"
+  sed_set "$commented_file" "DB_HOST" "db.internal" )
+if grep -qx 'DB_HOST=db.internal' "$commented_file" \
+    && [ "$(grep -c '^DB_HOST=' "$commented_file")" -eq 1 ] \
+    && ! grep -q '^# *DB_HOST=' "$commented_file"; then
+    pass "activates a commented key in place, without a second copy"
+else
+    fail "activates a commented key in place, without a second copy" "content: $(cat "$commented_file")"
+fi
+
+# Writing a key again must not add a second line either.
+( source "$env_dir/sed_set.sh"
+  sed_set "$commented_file" "DB_HOST" "db.other" )
+if [ "$(grep -c '^DB_HOST=' "$commented_file")" -eq 1 ]; then
+    pass "keeps a single line per key when the key is written again"
+else
+    fail "keeps a single line per key when the key is written again" "content: $(cat "$commented_file")"
+fi
+
 # A newline cannot be represented in an env file: the writer has to refuse
 # it, report it with its own exit code and leave the file untouched.
 newline_file="$env_dir/newline.env"
@@ -714,13 +738,15 @@ else
     fail "no deploy command calls a shell function that the child shell would not inherit" "functions used in a command string:$missing_in_child"
 fi
 
-# The deploy runs with the pnpm installed on the host: pnpm 10+ would
-# otherwise delegate to corepack to run the pinned version, downloading it
-# on the fly and asking for confirmation.
+# The deploy lets pnpm run the version the repository pins: pnpm
+# downloads it once, without asking, and the lockfile, the workspace
+# layout and the installed pnpm always agree. Forcing the host pnpm
+# made an older pnpm try to purge the modules tree of the pinned one,
+# and that purge aborts when there is no TTY to ask on.
 if grep -q "npm_config_manage_package_manager_versions=false" "$DEPLOY_SCRIPT"; then
-    pass "the deploy script uses the host pnpm instead of delegating to corepack"
+    fail "the deploy script lets pnpm run the version the repository pins" "manage-package-manager-versions is disabled"
 else
-    fail "the deploy script uses the host pnpm instead of delegating to corepack" "manage-package-manager-versions is not disabled"
+    pass "the deploy script lets pnpm run the version the repository pins"
 fi
 
 # The version drift between the host pnpm and the pinned one is reported.
