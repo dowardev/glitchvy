@@ -191,6 +191,32 @@ else
     fail "keeps a single line per key when the key is written again" "content: $(cat "$commented_file")"
 fi
 
+# A file written by an older setup can hold the same key twice: the
+# commented block of the template and an active copy at the end. The
+# writer keeps the template position and removes the other copy.
+messy_file="$env_dir/messy.env"
+printf 'APP_NAME=Glitchvy\n# DB_HOST=127.0.0.1\n# DB_USERNAME=root\nMAIL_MAILER=log\n' > "$messy_file"
+printf 'DB_HOST=db.old\nDB_USERNAME=old\n' >> "$messy_file"
+( source "$env_dir/sed_set.sh"
+  sed_set "$messy_file" "DB_HOST" "db.new"
+  sed_set "$messy_file" "DB_USERNAME" "user.new" )
+if [ "$(grep -c '^DB_HOST=' "$messy_file")" -eq 1 ] \
+    && [ "$(grep -c '^DB_USERNAME=' "$messy_file")" -eq 1 ] \
+    && grep -qx 'DB_HOST=db.new' "$messy_file" \
+    && grep -qx 'DB_USERNAME=user.new' "$messy_file" \
+    && ! grep -q '^# *DB_HOST=' "$messy_file"; then
+    pass "leaves a single line per key and cleans the copies of an old file"
+else
+    fail "leaves a single line per key and cleans the copies of an old file" "content: $(cat "$messy_file")"
+fi
+
+# The value ends up in the place of the template, not appended at the end.
+if [ "$(grep -n '^DB_HOST=' "$messy_file" | cut -d: -f1)" -lt "$(grep -n '^MAIL_MAILER=' "$messy_file" | cut -d: -f1)" ]; then
+    pass "writes the value in the place the template has it"
+else
+    fail "writes the value in the place the template has it" "content: $(cat "$messy_file")"
+fi
+
 # A newline cannot be represented in an env file: the writer has to refuse
 # it, report it with its own exit code and leave the file untouched.
 newline_file="$env_dir/newline.env"

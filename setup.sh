@@ -188,24 +188,57 @@ sed_set() {
     if [ "$needs_quoting" = true ]; then
         escaped_val="\"${escaped_val}\""
     fi
-    if grep -qE "^\s*${key}=" "$file" 2>/dev/null; then
-        # The key is already active: replace its value where it is.
-        if ! sed -i "s|^[[:space:]]*${key}=.*|${key}=${escaped_val}|" "$file"; then
-            log_error "Cannot write '$key' to $file"
-            return $EXIT_WRITE_ERROR
-        fi
-    elif grep -qE "^\s*#\s*${key}=" "$file" 2>/dev/null; then
-        # The key exists only as a commented line: the Laravel template
-        # ships the database block commented out. Activate that line in
-        # place. Appending a second copy would leave the file with two
-        # sources of truth for the same variable, and the first one wins.
+    # A key belongs in one place. A file written by an older setup can
+    # hold the same key twice: the commented block of the template and an
+    # active copy at the end. The value is written where the template put
+    # the key, and the other copies are removed, so the file keeps the
+    # structure of the template with a single source of truth.
+    local commented_line active_lines keep_line
+    commented_line="$(grep -nE "^[[:space:]]*#[[:space:]]*${key}=" "$file" 2>/dev/null | head -1 | cut -d: -f1)"
+    active_lines="$(grep -nE "^[[:space:]]*${key}=" "$file" 2>/dev/null | cut -d: -f1)"
+
+    if [ -n "$commented_line" ]; then
+        # The template still has the key commented out: that is its
+        # place, and the commented line becomes the active one.
+        keep_line="$commented_line"
         if ! sed -i "s|^[[:space:]]*#[[:space:]]*${key}=.*|${key}=${escaped_val}|" "$file"; then
             log_error "Cannot write '$key' to $file"
             return $EXIT_WRITE_ERROR
         fi
+    elif [ -n "$active_lines" ]; then
+        # The key is already active: replace its value where it is.
+        keep_line="$(printf '%s\n' "$active_lines" | head -1)"
+        if ! sed -i "s|^[[:space:]]*${key}=.*|${key}=${escaped_val}|" "$file"; then
+            log_error "Cannot write '$key' to $file"
+            return $EXIT_WRITE_ERROR
+        fi
     else
+        # The key is not in the file at all: it goes at the end.
+        keep_line=""
         if ! printf '%s\n' "${key}=${escaped_val}" >> "$file"; then
             log_error "Cannot write '$key' to $file"
+            return $EXIT_WRITE_ERROR
+        fi
+    fi
+
+    # Any other copy of the key is removed: the one written above is the
+    # only one that counts. A file written by an older setup can hold the
+    # key in the commented block of the template and in an active copy at
+    # the end; the second one is removed and the file keeps the structure
+    # of the template with a single source of truth.
+    if [ -n "$keep_line" ]; then
+        if ! awk -v key="$key" -v keep="$keep_line" '
+            BEGIN { pattern = "^[[:space:]]*" key "=" }
+            NR != keep && $0 ~ pattern { next }
+            { print }
+        ' "$file" > "$file.tmp" 2>/dev/null; then
+            log_error "Cannot write '$key' to $file"
+            rm -f "$file.tmp" 2>/dev/null || true
+            return $EXIT_WRITE_ERROR
+        fi
+        if ! mv "$file.tmp" "$file"; then
+            log_error "Cannot write '$key' to $file"
+            rm -f "$file.tmp" 2>/dev/null || true
             return $EXIT_WRITE_ERROR
         fi
     fi
