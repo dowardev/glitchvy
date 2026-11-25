@@ -749,6 +749,15 @@ else
     pass "the deploy script lets pnpm run the version the repository pins"
 fi
 
+# The deploy prints the branch and the commit it runs: the operator works
+# from more than one checkout and the copies drift.
+if grep -q 'DEPLOY_BRANCH="\$(git -C "\$REPO_ROOT" rev-parse --abbrev-ref HEAD' "$DEPLOY_SCRIPT" \
+    && grep -q 'DEPLOY_COMMIT="\$(git -C "\$REPO_ROOT" rev-parse --short HEAD' "$DEPLOY_SCRIPT"; then
+    pass "the deploy prints the branch and the commit it runs"
+else
+    fail "the deploy prints the branch and the commit it runs" "the deploy does not report its branch and commit"
+fi
+
 # The version drift between the host pnpm and the pinned one is reported.
 version_dir="$(mktemp -d)"
 mkdir -p "$version_dir/bin"

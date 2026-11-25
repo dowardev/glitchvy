@@ -119,6 +119,13 @@ export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 
 log_info "Repository root: $REPO_ROOT"
+# The operator runs the deploy from more than one checkout (the main clone
+# and the review worktree), and the copies drift: a deploy that runs an
+# older script fails in a way that has nothing to do with the server.
+# The branch and the commit are printed so the run says which copy ran.
+DEPLOY_BRANCH="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+DEPLOY_COMMIT="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+log_info "Deploying: $DEPLOY_BRANCH ($DEPLOY_COMMIT)"
 [[ "$DRY_RUN" == "true" ]] && log_warn "DRY-RUN MODE — no changes will be made"
 [[ "$VERBOSE" == "true" ]] && log_info "Verbose output enabled"
 [[ "$SKIP_CHECKS" == "true" ]] && log_warn "Checks skipped (--skip-checks)"
