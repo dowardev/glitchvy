@@ -765,8 +765,12 @@ EOF
     run_cmd "Frontend: pnpm install --frozen-lockfile" \
       "\"$REPO_ROOT/scripts/deploy/ensure-pnpm.sh\" && pnpm install --frozen-lockfile"
 
+    # The build runs through a helper: Vite loads .env, .env.local and
+    # .env.development* in every mode, so a developer's local file would
+    # be baked into the published bundle. The helper hides them and keeps
+    # only the production inputs.
     run_cmd "Frontend: build (vue-tsc + vite build)" \
-      "pnpm --filter glitchvy-admin build"
+      "\"$REPO_ROOT/scripts/deploy/build-frontend.sh\" \"$REPO_ROOT\" \"$FRONTEND_DIR\""
 
     TARBALL="/tmp/frontend.tar.gz"
 

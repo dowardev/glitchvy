@@ -827,6 +827,66 @@ fi
 rm -rf "$interactive_branch"
 
 # ============================================================
+section "scripts/deploy/build-frontend.sh — the production build inputs"
+
+# Vite loads .env, .env.local and .env.development* in every mode, so a
+# developer's local file ends up baked into the published bundle. The
+# helper hides them while the build runs and restores them after, also
+# when the build fails.
+build_dir="$(mktemp -d)"
+mkdir -p "$build_dir/front" "$build_dir/bin"
+printf 'VITE_GLITCHVY_API_URL=/api\n' > "$build_dir/front/.env.local"
+printf 'VITE_GLITCHVY_API_URL=https://api.example.com\n' > "$build_dir/front/.env.production"
+
+cat > "$build_dir/bin/pnpm" <<'EOF'
+#!/usr/bin/env bash
+if [ -f "$FRONT_DIR_FOR_TEST/.env.local" ]; then
+    echo "visible" > "$RESULT_FOR_TEST"
+else
+    echo "hidden" > "$RESULT_FOR_TEST"
+fi
+exit "${PNPM_EXIT_FOR_TEST:-0}"
+EOF
+chmod +x "$build_dir/bin/pnpm"
+
+FRONT_DIR_FOR_TEST="$build_dir/front" RESULT_FOR_TEST="$build_dir/result" \
+    PATH="$build_dir/bin:$PATH" \
+    "$REPO_ROOT/scripts/deploy/build-frontend.sh" "$build_dir" "$build_dir/front" >/dev/null 2>&1
+
+if [ "$(cat "$build_dir/result" 2>/dev/null)" = "hidden" ]; then
+    pass "hides the development env files while the build runs"
+else
+    fail "hides the development env files while the build runs" "the file was visible during the build"
+fi
+
+if [ -f "$build_dir/front/.env.local" ] && [ -f "$build_dir/front/.env.production" ]; then
+    pass "restores the development env files after the build"
+else
+    fail "restores the development env files after the build" "the files were not restored"
+fi
+
+# A failed build must restore them too: the operator keeps its local
+# files and the next run starts from the same state.
+FRONT_DIR_FOR_TEST="$build_dir/front" RESULT_FOR_TEST="$build_dir/result" \
+    PNPM_EXIT_FOR_TEST=1 PATH="$build_dir/bin:$PATH" \
+    "$REPO_ROOT/scripts/deploy/build-frontend.sh" "$build_dir" "$build_dir/front" >/dev/null 2>&1
+status=$?
+
+if [ -f "$build_dir/front/.env.local" ]; then
+    pass "restores the development env files when the build fails"
+else
+    fail "restores the development env files when the build fails" "the file was not restored"
+fi
+
+if [ "$status" -ne 0 ]; then
+    pass "reports the failure of the build"
+else
+    fail "reports the failure of the build" "the exit code was 0"
+fi
+
+rm -rf "$build_dir"
+
+# ============================================================
 rm -rf "$stub_bin" "$no_pnpm_dir"
 
 echo ""
