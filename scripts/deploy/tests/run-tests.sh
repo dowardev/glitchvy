@@ -758,6 +758,15 @@ else
     fail "the deploy prints the branch and the commit it runs" "the deploy does not report its branch and commit"
 fi
 
+# The target directory is verified before the upload: a path that points
+# at another copy of the application publishes the release there.
+if grep -q 'Backend: verify the target directory' "$DEPLOY_SCRIPT" \
+    && grep -q "does not hold a Laravel application" "$DEPLOY_SCRIPT"; then
+    pass "the deploy verifies the target directory before uploading"
+else
+    fail "the deploy verifies the target directory before uploading" "the deploy does not check the target"
+fi
+
 # The uploaded setup script is verified against the local one: the
 # operator runs the script from the server copy, and a copy that did not
 # arrive leaves the old script there, silently.

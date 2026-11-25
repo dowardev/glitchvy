@@ -32,8 +32,8 @@ glitchvy/
 On the server:
 
 ```
-public_html/glitchvy/            # the SPA (contents of front/dist/)
-public_html/glitchvy/back/       # the Laravel app (document root: back/public)
+public_html/subdomains/glitchvy/            # the SPA (contents of front/dist/)
+public_html/subdomains/glitchvy/back/       # the Laravel app (document root: back/public)
 ```
 
 The SPA and the API are served from the same host, so the SPA calls `/api` on its own origin (no CORS in production) and the session cookie works with Sanctum.
@@ -67,14 +67,14 @@ editing the `.env` by hand takes effect on the next request.
 
 ```bash
 # 1. The env file (owner-only permissions)
-scp -P 65002 back/.env u902881280@195.179.236.189:/home/u902881280/public_html/glitchvy/back/.env
-ssh -p 65002 u902881280@195.179.236.189 "chmod 600 /home/u902881280/public_html/glitchvy/back/.env"
+scp -P 65002 back/.env u902881280@195.179.236.189:/home/u902881280/public_html/subdomains/glitchvy/back/.env
+ssh -p 65002 u902881280@195.179.236.189 "chmod 600 /home/u902881280/public_html/subdomains/glitchvy/back/.env"
 
 # 2. The application key
-ssh -p 65002 u902881280@195.179.236.189 "cd /home/u902881280/public_html/glitchvy/back && php artisan key:generate"
+ssh -p 65002 u902881280@195.179.236.189 "cd /home/u902881280/public_html/subdomains/glitchvy/back && php artisan key:generate"
 
 # 3. The migrations
-ssh -p 65002 u902881280@195.179.236.189 "cd /home/u902881280/public_html/glitchvy/back && php artisan migrate --force"
+ssh -p 65002 u902881280@195.179.236.189 "cd /home/u902881280/public_html/subdomains/glitchvy/back && php artisan migrate --force"
 ```
 
 `setup.sh` does all of that in one guided run, and it also creates the admin
@@ -91,7 +91,7 @@ file is worse than none, because the next run reads it as the previous values.
 
 ```bash
 ssh -p 65002 u902881280@195.179.236.189
-cd /home/u902881280/public_html/glitchvy
+cd /home/u902881280/public_html/subdomains/glitchvy
 ./setup.sh
 ```
 
@@ -123,7 +123,7 @@ Exit codes: `0` success, `2` missing prerequisite, `3` missing environment varia
 
 ```bash
 ssh -p 65002 u902881280@195.179.236.189 \
-  "cd /home/u902881280/public_html/glitchvy && \
+  "cd /home/u902881280/public_html/subdomains/glitchvy && \
    GLITCHVY_APP_URL=https://errors.example.com \
    GLITCHVY_FRONTEND_URL=https://errors.example.com \
    GLITCHVY_DB_CONNECTION=mysql \
@@ -205,8 +205,8 @@ Required GitHub repository credentials (Settings → Secrets and variables → A
 | `SSH_USER` | Variable | `u902881280` | Loaded in GitHub |
 | `SSH_PRIVATE_KEY` | Secret | (key content) | Loaded in GitHub |
 | `SSH_KNOWN_HOSTS` | Secret | (known_hosts line) | Loaded in GitHub |
-| `DEPLOY_PATH_BACKEND` | Variable | `/home/u902881280/public_html/glitchvy/back` | Loaded in GitHub |
-| `DEPLOY_PATH_FRONTEND` | Variable | `/home/u902881280/public_html/glitchvy` | Loaded in GitHub |
+| `DEPLOY_PATH_BACKEND` | Variable | `/home/u902881280/public_html/subdomains/glitchvy/back` | Loaded in GitHub |
+| `DEPLOY_PATH_FRONTEND` | Variable | `/home/u902881280/public_html/subdomains/glitchvy` | Loaded in GitHub |
 
 > **Note:** In GitHub Actions the private key is always provided as the **content** of the secret (not a file path). The installation block accepts both shapes for compatibility, but the GitHub secret holds the key content directly.
 
@@ -280,7 +280,7 @@ The migrations are **not** reverted automatically: check the release notes befor
 ```bash
 # Create the first project and its API key (the SDK needs the key)
 ssh -p 65002 u902881280@195.179.236.189 \
-  "cd /home/u902881280/public_html/glitchvy/back && \
+  "cd /home/u902881280/public_html/subdomains/glitchvy/back && \
    php artisan glitchvy:create-project --name='My app' && \
    php artisan glitchvy:create-api-key --name='default'"
 

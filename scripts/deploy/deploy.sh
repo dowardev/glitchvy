@@ -721,6 +721,12 @@ deploy_fullstack() {
   if [[ "$DEPLOY_BACKEND" == "true" ]]; then
     log_phase "BACKEND DEPLOY"
 
+    # The target is verified before anything is uploaded: a path that
+    # points at another copy of the application publishes the release
+    # there, and the operator keeps configuring the other one.
+    run_remote "Backend: verify the target directory" \
+      "if [ ! -f '$DEPLOY_PATH_BACKEND/artisan' ]; then echo 'the target does not hold a Laravel application: $DEPLOY_PATH_BACKEND'; exit 1; fi; if [ ! -f '$DEPLOY_PATH_BACKEND/.env' ]; then echo 'WARNING: the target has no environment file yet: $DEPLOY_PATH_BACKEND'; fi"
+
     TMP_ROOT="/tmp/backend-deploy-$$"
     BUILD_DIR="$TMP_ROOT/back"
     TARBALL="/tmp/backend.tar.gz"
