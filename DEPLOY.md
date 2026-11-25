@@ -140,6 +140,9 @@ ssh -p 65002 u902881280@195.179.236.189 \
 
 ```bash
 cp scripts/deploy/.env.example scripts/deploy/.env   # once, then fill in your values
+```
+
+That file is **local and not tracked by git**: every clone of the repository has its own copy, with its own host, paths and secrets. A copy left behind from another checkout points at another directory and publishes the application there. The deploy prints the branch and the commit it runs, and the paths it is about to write to, so a stale copy is visible before anything is uploaded.
 ./scripts/deploy/deploy.sh
 ```
 
@@ -176,7 +179,7 @@ cp front/.env.production.example front/.env.production
 # edit front/.env.production (VITE_GLITCHVY_API_URL, VITE_GLITCHVY_CSP_CONNECT_SRC)
 ```
 
-The deploy script builds the SPA with `pnpm --filter glitchvy-admin build` from the monorepo root, so `front/.env.production` is picked up automatically.
+The deploy script builds the SPA with `pnpm --filter glitchvy-admin build` from the monorepo root, so `front/.env.production` is picked up automatically. The build runs through `scripts/deploy/build-frontend.sh`, which moves the development env files aside while it runs: Vite loads them in every mode, so a developer's local file would otherwise be baked into the published bundle.
 
 ---
 
@@ -185,7 +188,7 @@ The deploy script builds the SPA with `pnpm --filter glitchvy-admin build` from 
 Pushing a semver tag (`v1.2.3`, `v1.2.3-rc.1`, `v1.2.3-dryrun.1`) runs the GitHub Actions
 workflow **Deploy** (`.github/workflows/deploy.yml`) with the deploy jobs:
 
-- `backend_deploy` — ships `back/` (without `vendor`, `.env*`, the local sqlite database and the generated caches), then runs `composer install --no-dev`, `config:cache` and `route:cache` on the server. It does **not** migrate.
+- `backend_deploy` — ships `back/` (without `vendor`, `.env*`, the local sqlite database and the generated caches), then runs `composer install --no-dev` and `route:cache` on the server. It does **not** migrate, and it does **not** run `config:cache`: the environment file of the server stays authoritative.
 - `backend_migrate` — **manual** job: prints the pending migrations and then runs them. Start it explicitly after reviewing what the migration does.
 - `frontend_deploy` — builds the SPA and ships `front/dist/`.
 
