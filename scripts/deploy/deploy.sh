@@ -923,6 +923,15 @@ deploy_setup() {
     "scp ${SCP_OPTS[*]} '$local_path' '$SSH_USER@$SSH_HOST:$SETUP_REMOTE_DIR/$base'"
   run_remote "Setup: chmod +x $base" "chmod +x '$SETUP_REMOTE_DIR/$base'"
 
+  # The upload is verified: the operator runs the setup from the server
+  # copy, and a copy that did not arrive leaves the old script there,
+  # with its own bugs, without a word. The comparison happens on the
+  # server, so the check needs no round trip.
+  local local_sum
+  local_sum="$(md5sum "$local_path" | cut -d' ' -f1)"
+  run_remote "Setup: verify the uploaded $base" \
+    "remote_sum=\$(md5sum '$SETUP_REMOTE_DIR/$base' | cut -d' ' -f1); if [ \"\$remote_sum\" = '$local_sum' ]; then echo 'the uploaded script matches the local one'; else echo \"the uploaded script does not match the local one (remote: \$remote_sum)\"; exit 1; fi"
+
   # The setup script creates the real .env files from the .env.*.example
   # templates. The deploy tarballs exclude every .env* file (secrets
   # policy), which also strips the non-secret example templates — so on a

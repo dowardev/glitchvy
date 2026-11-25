@@ -758,6 +758,16 @@ else
     fail "the deploy prints the branch and the commit it runs" "the deploy does not report its branch and commit"
 fi
 
+# The uploaded setup script is verified against the local one: the
+# operator runs the script from the server copy, and a copy that did not
+# arrive leaves the old script there, silently.
+if grep -q 'Setup: verify the uploaded' "$DEPLOY_SCRIPT" \
+    && grep -q 'md5sum "\$local_path"' "$DEPLOY_SCRIPT"; then
+    pass "the deploy verifies the uploaded setup script against the local one"
+else
+    fail "the deploy verifies the uploaded setup script against the local one" "the deploy does not compare the checksums"
+fi
+
 # The version drift between the host pnpm and the pinned one is reported.
 version_dir="$(mktemp -d)"
 mkdir -p "$version_dir/bin"
