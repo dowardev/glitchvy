@@ -567,10 +567,15 @@ configure_backend() {
         fi
     fi
 
-    # Sanctum's stateful domains and the CORS allow-list are derived from the
-    # admin SPA URL: the SPA authenticates with a cookie, so the backend has to
-    # trust that exact host.
-    sanctum_stateful_domains="$(echo "$frontend_url" | sed -E 's|^https?://||; s|/.*$||')"
+    # Sanctum's stateful domains and the CORS allow-list are derived from
+    # the URLs of the deployment: the SPA authenticates with a cookie, so
+    # the backend has to trust that exact host.
+    #
+    # The cookie lives in the origin of the API, so the stateful domain
+    # comes from the API url (APP_URL). The CORS allow-list names the
+    # origins that may call the API, and that is the SPA (FRONTEND_URL).
+    # When both are served from the same host, the two are the same host.
+    sanctum_stateful_domains="$(echo "$app_url" | sed -E 's|^https?://||; s|/.*$||')"
     cors_allowed_origins="$frontend_url"
 
     sed_set ".env" "APP_NAME" "$app_name" || die $?
