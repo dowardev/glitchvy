@@ -45,6 +45,9 @@ restore_env_files() {
             fi
         fi
     done
+    if [ "$CREATED_ENV" = "true" ] && [ -f "$FRONT_DIR/.env.production" ]; then
+        rm -f "$FRONT_DIR/.env.production"
+    fi
     rmdir "$STASH" 2>/dev/null || true
     return 0
 }
@@ -60,6 +63,18 @@ for name in $STASHED_NAMES; do
         }
     fi
 done
+
+# The production inputs are the tracked template: a build without them
+# bakes the defaults of the development machine into the bundle. A
+# local file of the operator wins over the template.
+CREATED_ENV=false
+if [ ! -f "$FRONT_DIR/.env.production" ] && [ -f "$FRONT_DIR/.env.production.example" ]; then
+    if ! cp "$FRONT_DIR/.env.production.example" "$FRONT_DIR/.env.production"; then
+        echo "could not prepare the production env file" >&2
+        exit 1
+    fi
+    CREATED_ENV=true
+fi
 
 cd "$REPO_ROOT" || exit 1
 pnpm --filter glitchvy-admin build

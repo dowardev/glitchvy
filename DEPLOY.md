@@ -91,7 +91,7 @@ file is worse than none, because the next run reads it as the previous values.
 
 ```bash
 ssh -p 65002 u902881280@195.179.236.189
-cd /home/u902881280/public_html/subdomains/glitchvy
+cd /home/u902881280/public_html/subdomains/glitchvy/front
 ./setup.sh
 ```
 
@@ -123,7 +123,7 @@ Exit codes: `0` success, `2` missing prerequisite, `3` missing environment varia
 
 ```bash
 ssh -p 65002 u902881280@195.179.236.189 \
-  "cd /home/u902881280/public_html/subdomains/glitchvy && \
+  "cd /home/u902881280/public_html/subdomains/glitchvy/front && \
    GLITCHVY_APP_URL=https://errors.example.com \
    GLITCHVY_FRONTEND_URL=https://errors.example.com \
    GLITCHVY_DB_CONNECTION=mysql \
@@ -206,7 +206,7 @@ Required GitHub repository credentials (Settings → Secrets and variables → A
 | `SSH_PRIVATE_KEY` | Secret | (key content) | Loaded in GitHub |
 | `SSH_KNOWN_HOSTS` | Secret | (known_hosts line) | Loaded in GitHub |
 | `DEPLOY_PATH_BACKEND` | Variable | `/home/u902881280/public_html/subdomains/glitchvy/back` | Loaded in GitHub |
-| `DEPLOY_PATH_FRONTEND` | Variable | `/home/u902881280/public_html/subdomains/glitchvy` | Loaded in GitHub |
+| `DEPLOY_PATH_FRONTEND` | Variable | `/home/u902881280/public_html/subdomains/glitchvy/front` | Loaded in GitHub |
 
 > **Note:** In GitHub Actions the private key is always provided as the **content** of the secret (not a file path). The installation block accepts both shapes for compatibility, but the GitHub secret holds the key content directly.
 
