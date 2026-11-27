@@ -799,6 +799,16 @@ EOF
 )
     run_remote "Frontend: extract on server" "$REMOTE_CMD"
 
+    # The Apache rules of the document root are versioned with the
+    # frontend, not with the build: the rules route the API to the
+    # Laravel application and the routes of the SPA to index.html. A
+    # build does not produce them, and a document root without them
+    # answers the login with the HTML of the SPA instead of JSON.
+    if [[ -f "$FRONTEND_DIR/.htaccess" ]]; then
+      run_cmd "Frontend: upload .htaccess" \
+        "scp ${SCP_OPTS[*]} '$FRONTEND_DIR/.htaccess' '$SSH_USER@$SSH_HOST:$DEPLOY_PATH_FRONTEND/.htaccess'"
+    fi
+
     if [[ "$DRY_RUN" != "true" ]]; then rm -f "$TARBALL"; fi
   fi
 }

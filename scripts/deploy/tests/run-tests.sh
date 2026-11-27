@@ -784,6 +784,14 @@ else
     fail "the deploy prints the branch and the commit it runs" "the deploy does not report its branch and commit"
 fi
 
+# The Apache rules of the document root travel with the deploy: they are
+# versioned with the frontend and not produced by the build.
+if grep -q 'Frontend: upload .htaccess' "$DEPLOY_SCRIPT"; then
+    pass "the deploy uploads the Apache rules of the document root"
+else
+    fail "the deploy uploads the Apache rules of the document root" "the deploy does not upload them"
+fi
+
 # The target directory is verified before the upload: a path that points
 # at another copy of the application publishes the release there.
 if grep -q 'Backend: verify the target directory' "$DEPLOY_SCRIPT" \
