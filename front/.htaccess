@@ -7,14 +7,16 @@
 # The Laravel application is deployed to back/, inside this same
 # document root, so the API is routed to it: the SPA calls /api on its
 # own origin and the Sanctum session cookie belongs to that origin.
-# The rules are skipped when there is no application in back/, which is
-# the case when the API is served from another subdomain.
+#
+# The rules are not guarded by a condition on the document root: the
+# %DOCUMENT_ROOT% of a subdomain does not always point to the folder
+# that holds the application, and a rule that never applies is worse
+# than a rule that fails with a 404.
 
 RewriteEngine On
 
 # The API, the Sanctum endpoints and the stored files belong to the
 # Laravel application.
-RewriteCond %{DOCUMENT_ROOT}/back/public/index.php -f
 RewriteCond %{REQUEST_URI} !^/back/
 RewriteRule ^api(/.*)?$ back/public/api$1 [L]
 RewriteRule ^sanctum(/.*)?$ back/public/sanctum$1 [L]

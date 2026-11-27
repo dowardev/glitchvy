@@ -807,6 +807,10 @@ EOF
     if [[ -f "$FRONTEND_DIR/.htaccess" ]]; then
       run_cmd "Frontend: upload .htaccess" \
         "scp ${SCP_OPTS[*]} '$FRONTEND_DIR/.htaccess' '$SSH_USER@$SSH_HOST:$DEPLOY_PATH_FRONTEND/.htaccess'"
+      # The rules have to be readable by the web server, which does not
+      # run as the owner of the account.
+      run_remote "Frontend: fix the permissions of .htaccess" \
+        "chmod 644 '$DEPLOY_PATH_FRONTEND/.htaccess'"
     fi
 
     if [[ "$DRY_RUN" != "true" ]]; then rm -f "$TARBALL"; fi
