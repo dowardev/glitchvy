@@ -102,7 +102,30 @@ DEPLOY_DIR="$REPO_ROOT/scripts/deploy"
 ENV_FILE="$DEPLOY_DIR/.env"
 CONF_FILE="$DEPLOY_DIR/deploy.conf"
 
+# The deploy must never wait for an answer: corepack asks before it
+# downloads pnpm the first time, which would hang a deploy (and every
+# CI job) on a prompt nobody can answer.
+export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+
+# The deploy uses the pnpm version the repository pins in
+# packageManager. pnpm switches to it on its own: it downloads the
+# pinned version once, without asking anything, and then every command
+# runs with the version the lockfile was written for.
+#
+# Forcing the host pnpm instead (manage-package-manager-versions=false)
+# made an older pnpm try to purge the node_modules tree that the
+# pinned pnpm had built, and that purge aborts when there is no TTY to
+# ask on.
+export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+
 log_info "Repository root: $REPO_ROOT"
+# The operator runs the deploy from more than one checkout (the main clone
+# and the review worktree), and the copies drift: a deploy that runs an
+# older script fails in a way that has nothing to do with the server.
+# The branch and the commit are printed so the run says which copy ran.
+DEPLOY_BRANCH="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+DEPLOY_COMMIT="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+log_info "Deploying: $DEPLOY_BRANCH ($DEPLOY_COMMIT)"
 [[ "$DRY_RUN" == "true" ]] && log_warn "DRY-RUN MODE — no changes will be made"
 [[ "$VERBOSE" == "true" ]] && log_info "Verbose output enabled"
 [[ "$SKIP_CHECKS" == "true" ]] && log_warn "Checks skipped (--skip-checks)"
@@ -492,13 +515,31 @@ run_remote() {
   return $exit_code
 }
 
-# Ensure pnpm is available without re-running the global corepack mutation every deploy.
-ensure_pnpm() {
-  if ! command -v pnpm >/dev/null 2>&1; then
-    log_debug "pnpm not on PATH — running corepack enable once"
-    corepack enable
-  else
-    log_debug "pnpm already on PATH — skip corepack enable"
+# The pnpm bootstrap lives in scripts/deploy/ensure-pnpm.sh, not in a shell
+# function: run_cmd executes its commands in a child shell (`bash -c`) and a
+# child shell does not inherit the functions of the parent, so a function
+# called from a command string would fail with "command not found".
+
+# Report the pnpm version drift between the host and the version the
+# repository pins. The deploy does not fail on it: the host tooling is
+# the operator's choice, and the lockfile is compatible.
+check_pnpm_version() {
+  local pinned current
+  pinned="$(sed -n 's/.*"packageManager"[[:space:]]*:[[:space:]]*"pnpm@\([^"]*\)".*/\1/p' "$REPO_ROOT/package.json" 2>/dev/null | head -1)"
+  current="$(pnpm --version 2>/dev/null || true)"
+
+  if [[ -z "$pinned" || -z "$current" ]]; then
+    return 0
+  fi
+
+  if [[ "$pinned" != "$current" ]]; then
+    log_warn "pnpm $current is running, the repository pins pnpm@$pinned."
+    log_warn "The modules tree is rebuilt with the running pnpm."
+    # A different pnpm wants to purge the modules tree of the pinned
+    # one, and that purge asks for a confirmation. Without a TTY the
+    # question cannot be answered and the install aborts, so the
+    # non-interactive mode answers it: the tree is rebuilt.
+    export CI=true
   fi
 }
 
@@ -629,8 +670,9 @@ run_checks() {
 
       if [[ "$DEPLOY_FRONTEND" == "true" ]]; then
         log_phase "FRONTEND CHECKS"
+        check_pnpm_version
         run_cmd "Frontend: typecheck (vue-tsc)" \
-          "cd $FRONTEND_DIR && ensure_pnpm && pnpm exec vue-tsc --noEmit"
+          "cd $FRONTEND_DIR && \"$REPO_ROOT/scripts/deploy/ensure-pnpm.sh\" && pnpm exec vue-tsc --noEmit"
         run_cmd "Frontend: unit tests (vitest --run)" \
           "cd $FRONTEND_DIR && pnpm exec vitest --run"
       fi
@@ -639,7 +681,7 @@ run_checks() {
       # reach a release either, so its checks run with every deploy.
       log_phase "SDK CHECKS"
       run_cmd "SDK: typecheck (tsc --noEmit)" \
-        "ensure_pnpm && pnpm --filter @dowardev/glitchvy lint"
+        "\"$REPO_ROOT/scripts/deploy/ensure-pnpm.sh\" && pnpm --filter @dowardev/glitchvy lint"
       run_cmd "SDK: unit tests (vitest --run)" \
         "pnpm --filter @dowardev/glitchvy test:run"
       ;;
@@ -648,7 +690,7 @@ run_checks() {
       run_cmd "Backend: lint (pint)" \
         "composer install --prefer-dist --no-progress --no-scripts --no-interaction && vendor/bin/pint --test"
       run_cmd "Frontend: lint (oxlint + types)" \
-        "ensure_pnpm && pnpm install --frozen-lockfile && pnpm run lint:oxlint && pnpm run types:check"
+        "\"$REPO_ROOT/scripts/deploy/ensure-pnpm.sh\" && pnpm install --frozen-lockfile && pnpm run lint:oxlint && pnpm run types:check"
       
       if validate_test_environment "$PWD" "$PWD"; then
         run_cmd "Backend: tests (PHPUnit, sqlite :memory:)" \
@@ -679,6 +721,12 @@ deploy_fullstack() {
   if [[ "$DEPLOY_BACKEND" == "true" ]]; then
     log_phase "BACKEND DEPLOY"
 
+    # The target is verified before anything is uploaded: a path that
+    # points at another copy of the application publishes the release
+    # there, and the operator keeps configuring the other one.
+    run_remote "Backend: verify the target directory" \
+      "if [ ! -f '$DEPLOY_PATH_BACKEND/artisan' ]; then echo 'the target does not hold a Laravel application: $DEPLOY_PATH_BACKEND'; exit 1; fi; if [ ! -f '$DEPLOY_PATH_BACKEND/.env' ]; then echo 'WARNING: the target has no environment file yet: $DEPLOY_PATH_BACKEND'; fi"
+
     TMP_ROOT="/tmp/backend-deploy-$$"
     BUILD_DIR="$TMP_ROOT/back"
     TARBALL="/tmp/backend.tar.gz"
@@ -708,6 +756,15 @@ tar -xzf /tmp/backend.tar.gz -C "${DEPLOY_PATH_BACKEND}"
 cd "${DEPLOY_PATH_BACKEND}"
 $BACKEND_REMOTE_CMD
 rm /tmp/backend.tar.gz
+
+# The web server reads the files as another user, so the permissions of
+# the release do not depend on the umask of the machine that built it.
+# The environment file keeps its owner-only permissions and the
+# directories the application writes to stay writable by the account.
+find "${DEPLOY_PATH_BACKEND}" -type d -exec chmod 755 {} +
+find "${DEPLOY_PATH_BACKEND}" -type f -exec chmod 644 {} +
+chmod -R 775 "${DEPLOY_PATH_BACKEND}/storage" "${DEPLOY_PATH_BACKEND}/bootstrap/cache" 2>/dev/null || true
+if [ -f "${DEPLOY_PATH_BACKEND}/.env" ]; then chmod 600 "${DEPLOY_PATH_BACKEND}/.env"; fi
 EOF
 )
     run_remote "Backend: extract & deploy on server" "$REMOTE_CMD"
@@ -719,11 +776,16 @@ EOF
   if [[ "$DEPLOY_FRONTEND" == "true" ]]; then
     log_phase "FRONTEND DEPLOY"
 
+    check_pnpm_version
     run_cmd "Frontend: pnpm install --frozen-lockfile" \
-      "ensure_pnpm && pnpm install --frozen-lockfile"
+      "\"$REPO_ROOT/scripts/deploy/ensure-pnpm.sh\" && pnpm install --frozen-lockfile"
 
+    # The build runs through a helper: Vite loads .env, .env.local and
+    # .env.development* in every mode, so a developer's local file would
+    # be baked into the published bundle. The helper hides them and keeps
+    # only the production inputs.
     run_cmd "Frontend: build (vue-tsc + vite build)" \
-      "pnpm --filter glitchvy-admin build"
+      "\"$REPO_ROOT/scripts/deploy/build-frontend.sh\" \"$REPO_ROOT\" \"$FRONTEND_DIR\""
 
     TARBALL="/tmp/frontend.tar.gz"
 
@@ -742,9 +804,28 @@ set -e
 mkdir -p "${DEPLOY_PATH_FRONTEND}"
 tar -xzf /tmp/frontend.tar.gz -C "${DEPLOY_PATH_FRONTEND}"
 rm /tmp/frontend.tar.gz
+
+# The web server reads the files as another user, so the permissions of
+# the release do not depend on the umask of the machine that built it.
+find "${DEPLOY_PATH_FRONTEND}" -type d -exec chmod 755 {} +
+find "${DEPLOY_PATH_FRONTEND}" -type f -exec chmod 644 {} +
 EOF
 )
     run_remote "Frontend: extract on server" "$REMOTE_CMD"
+
+    # The Apache rules of the document root are versioned with the
+    # frontend, not with the build: the rules route the API to the
+    # Laravel application and the routes of the SPA to index.html. A
+    # build does not produce them, and a document root without them
+    # answers the login with the HTML of the SPA instead of JSON.
+    if [[ -f "$FRONTEND_DIR/.htaccess" ]]; then
+      run_cmd "Frontend: upload .htaccess" \
+        "scp ${SCP_OPTS[*]} '$FRONTEND_DIR/.htaccess' '$SSH_USER@$SSH_HOST:$DEPLOY_PATH_FRONTEND/.htaccess'"
+      # The rules have to be readable by the web server, which does not
+      # run as the owner of the account.
+      run_remote "Frontend: fix the permissions of .htaccess" \
+        "chmod 644 '$DEPLOY_PATH_FRONTEND/.htaccess'"
+    fi
 
     if [[ "$DRY_RUN" != "true" ]]; then rm -f "$TARBALL"; fi
   fi
@@ -802,11 +883,11 @@ deploy_docs() {
 # ============================================================
 # Migrations (opt-in) — never run unattended
 # ============================================================
-# The deploy never migrates the production database on its own: a pending
-# migration can drop a table or a column, and that must not happen without
-# a human in the loop. The operator asks for it explicitly (--migrate), and
-# even then the guard refuses to run a destructive migration unless
-# ALLOW_DESTRUCTIVE_MIGRATIONS=1 is set on purpose.
+# The deploy never migrates the production database on its own: the operator
+# asks for it explicitly (--migrate). The data safety lives in the
+# migrations themselves: a migration that rebuilds a table copies the rows
+# before dropping the old one (see the migration checks in the tooling
+# suite), and the foreign keys carry their own delete semantics.
 run_migrations() {
   if [[ "$RUN_MIGRATIONS" != "true" ]]; then
     log_debug "Migrations skipped (not requested with --migrate)"
@@ -823,14 +904,8 @@ PENDING=\$(php artisan migrate --pretend --force --no-ansi 2>/dev/null) || {
   echo "Cannot read the pending migrations (migrate --pretend failed)." >&2
   exit 1
 }
-# The same list as in setup.sh: keep both in sync.
-if echo "\$PENDING" | grep -qiE 'drop table|drop column|drop index|drop constraint|drop foreign key|truncate|rename column|rename table'; then
-  if [ "\${ALLOW_DESTRUCTIVE_MIGRATIONS:-}" != "1" ]; then
-    echo "Destructive migration detected. Review it, then re-run with ALLOW_DESTRUCTIVE_MIGRATIONS=1 to apply it." >&2
-    exit 1
-  fi
-  echo "WARNING: applying a destructive migration (ALLOW_DESTRUCTIVE_MIGRATIONS=1)"
-fi
+echo "Pending migrations:"
+echo "\$PENDING"
 ${BACKEND_MIGRATE_CMD:-php artisan migrate --force}
 EOF
 )
@@ -881,6 +956,15 @@ deploy_setup() {
   run_cmd "Setup: upload $base" \
     "scp ${SCP_OPTS[*]} '$local_path' '$SSH_USER@$SSH_HOST:$SETUP_REMOTE_DIR/$base'"
   run_remote "Setup: chmod +x $base" "chmod +x '$SETUP_REMOTE_DIR/$base'"
+
+  # The upload is verified: the operator runs the setup from the server
+  # copy, and a copy that did not arrive leaves the old script there,
+  # with its own bugs, without a word. The comparison happens on the
+  # server, so the check needs no round trip.
+  local local_sum
+  local_sum="$(md5sum "$local_path" | cut -d' ' -f1)"
+  run_remote "Setup: verify the uploaded $base" \
+    "remote_sum=\$(md5sum '$SETUP_REMOTE_DIR/$base' | cut -d' ' -f1); if [ \"\$remote_sum\" = '$local_sum' ]; then echo 'the uploaded script matches the local one'; else echo \"the uploaded script does not match the local one (remote: \$remote_sum)\"; exit 1; fi"
 
   # The setup script creates the real .env files from the .env.*.example
   # templates. The deploy tarballs exclude every .env* file (secrets

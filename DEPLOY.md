@@ -32,8 +32,8 @@ glitchvy/
 On the server:
 
 ```
-public_html/glitchvy/            # the SPA (contents of front/dist/)
-public_html/glitchvy/back/       # the Laravel app (document root: back/public)
+public_html/subdomains/glitchvy/            # the SPA (contents of front/dist/)
+public_html/subdomains/glitchvy/back/       # the Laravel app (document root: back/public)
 ```
 
 The SPA and the API are served from the same host, so the SPA calls `/api` on its own origin (no CORS in production) and the session cookie works with Sanctum.
@@ -59,13 +59,39 @@ On your **machine**:
 
 `setup.sh` is uploaded by the deploy script, but it is **never executed automatically**: it prompts for secrets (database password, admin password).
 
+### Configuring the server by hand
+
+`setup.sh` is a **helper**, not the only path. The server env file belongs to
+the operator: the deploy never writes it, and it never caches the config, so
+editing the `.env` by hand takes effect on the next request.
+
+```bash
+# 1. The env file (owner-only permissions)
+scp -P 65002 back/.env u902881280@195.179.236.189:/home/u902881280/public_html/subdomains/glitchvy/back/.env
+ssh -p 65002 u902881280@195.179.236.189 "chmod 600 /home/u902881280/public_html/subdomains/glitchvy/back/.env"
+
+# 2. The application key
+ssh -p 65002 u902881280@195.179.236.189 "cd /home/u902881280/public_html/subdomains/glitchvy/back && php artisan key:generate"
+
+# 3. The migrations
+ssh -p 65002 u902881280@195.179.236.189 "cd /home/u902881280/public_html/subdomains/glitchvy/back && php artisan migrate --force"
+```
+
+`setup.sh` does all of that in one guided run, and it also creates the admin
+user and runs the health checks. Use whichever path fits.
+
 The environment file it writes on the server (database password, `APP_KEY`, mail credentials) and its
 backups are restricted to the owner (`chmod 600`). The host is shared, and with the default
 permissions the file would be readable by any other user of the machine.
 
+Every run keeps a timestamped backup of the env files (`.bak.<timestamp>`, the last five) before
+touching them. If the setup fails, it **undoes the partial write**: the env file is restored from
+its backup, or removed when the run created it and there was no previous state. A half written env
+file is worse than none, because the next run reads it as the previous values.
+
 ```bash
 ssh -p 65002 u902881280@195.179.236.189
-cd /home/u902881280/public_html/glitchvy
+cd /home/u902881280/public_html/subdomains/glitchvy/front
 ./setup.sh
 ```
 
@@ -74,8 +100,8 @@ What it does:
 1. Checks the prerequisites (PHP version, Composer, Node/pnpm).
 2. Creates `back/.env` from `back/.env.production.example` (backing up the previous one) and asks for:
    - app name, backend URL (`APP_URL`) and admin SPA URL (`FRONTEND_URL`);
-   - the database (`sqlite` — the default — or `mysql`);
-   - the mail settings and the `GLITCHVY_*` tunables (retention, storage disk, rate limit).
+   - the database (`mysql` — the default — or `sqlite`);
+   - the mail settings. The `GLITCHVY_*` tunables (retention, storage disk, rate limit) are not asked for: they keep the defaults of `config/glitchvy.php`.
    From the SPA URL it derives `SANCTUM_STATEFUL_DOMAINS` and `CORS_ALLOWED_ORIGINS`.
 3. Generates `APP_KEY` (`php artisan key:generate`).
 4. Runs the migrations (`php artisan migrate --force`) and links the public storage.
@@ -97,7 +123,7 @@ Exit codes: `0` success, `2` missing prerequisite, `3` missing environment varia
 
 ```bash
 ssh -p 65002 u902881280@195.179.236.189 \
-  "cd /home/u902881280/public_html/glitchvy && \
+  "cd /home/u902881280/public_html/subdomains/glitchvy/front && \
    GLITCHVY_APP_URL=https://errors.example.com \
    GLITCHVY_FRONTEND_URL=https://errors.example.com \
    GLITCHVY_DB_CONNECTION=mysql \
@@ -114,6 +140,9 @@ ssh -p 65002 u902881280@195.179.236.189 \
 
 ```bash
 cp scripts/deploy/.env.example scripts/deploy/.env   # once, then fill in your values
+```
+
+That file is **local and not tracked by git**: every clone of the repository has its own copy, with its own host, paths and secrets. A copy left behind from another checkout points at another directory and publishes the application there. The deploy prints the branch and the commit it runs, and the paths it is about to write to, so a stale copy is visible before anything is uploaded.
 ./scripts/deploy/deploy.sh
 ```
 
@@ -125,7 +154,7 @@ The script runs the checks (backend PHPUnit, SDK `tsc` + vitest, SPA `vue-tsc` +
 ./scripts/deploy/deploy.sh --migrate
 ```
 
-The guard reads the SQL that `artisan migrate --pretend` would run and refuses to apply a destructive one (`DROP TABLE`, `DROP COLUMN`, `TRUNCATE`, `RENAME COLUMN`) unless you set `ALLOW_DESTRUCTIVE_MIGRATIONS=1` on purpose.
+The pending migrations are printed before they run, so you can see exactly what is about to be applied. The data safety lives in the migrations themselves: a migration that rebuilds a table (the SQLite table-rebuild pattern) copies the rows before dropping the old table, and the foreign keys carry their own delete semantics (`nullOnDelete` on the project owner, `ON DELETE CASCADE` on the reports). The tooling suite checks that rule on every migration, so a `DROP TABLE` without a row copy fails the CI.
 
 Options:
 
@@ -150,7 +179,7 @@ cp front/.env.production.example front/.env.production
 # edit front/.env.production (VITE_GLITCHVY_API_URL, VITE_GLITCHVY_CSP_CONNECT_SRC)
 ```
 
-The deploy script builds the SPA with `pnpm --filter glitchvy-admin build` from the monorepo root, so `front/.env.production` is picked up automatically.
+The deploy script builds the SPA with `pnpm --filter glitchvy-admin build` from the monorepo root, so `front/.env.production` is picked up automatically. The build runs through `scripts/deploy/build-frontend.sh`, which moves the development env files aside while it runs: Vite loads them in every mode, so a developer's local file would otherwise be baked into the published bundle.
 
 ---
 
@@ -159,8 +188,8 @@ The deploy script builds the SPA with `pnpm --filter glitchvy-admin build` from 
 Pushing a semver tag (`v1.2.3`, `v1.2.3-rc.1`, `v1.2.3-dryrun.1`) runs the GitHub Actions
 workflow **Deploy** (`.github/workflows/deploy.yml`) with the deploy jobs:
 
-- `backend_deploy` — ships `back/` (without `vendor`, `.env*`, the local sqlite database and the generated caches), then runs `composer install --no-dev`, `config:cache` and `route:cache` on the server. It does **not** migrate.
-- `backend_migrate` — **manual** job: runs the pending migrations with the same destructive-migration guard as `--migrate`. Start it explicitly after reviewing what the migration does. Requires `ALLOW_DESTRUCTIVE_MIGRATIONS=1` to apply a destructive migration.
+- `backend_deploy` — ships `back/` (without `vendor`, `.env*`, the local sqlite database and the generated caches), then runs `composer install --no-dev` and `route:cache` on the server. It does **not** migrate, and it does **not** run `config:cache`: the environment file of the server stays authoritative.
+- `backend_migrate` — **manual** job: prints the pending migrations and then runs them. Start it explicitly after reviewing what the migration does.
 - `frontend_deploy` — builds the SPA and ships `front/dist/`.
 
 The workflow also provides two **manual** rollback jobs (`rollback_backend`, `rollback_frontend`) that redeploy the previous stable tag.
@@ -176,9 +205,8 @@ Required GitHub repository credentials (Settings → Secrets and variables → A
 | `SSH_USER` | Variable | `u902881280` | Loaded in GitHub |
 | `SSH_PRIVATE_KEY` | Secret | (key content) | Loaded in GitHub |
 | `SSH_KNOWN_HOSTS` | Secret | (known_hosts line) | Loaded in GitHub |
-| `DEPLOY_PATH_BACKEND` | Variable | `/home/u902881280/public_html/glitchvy/back` | Loaded in GitHub |
-| `DEPLOY_PATH_FRONTEND` | Variable | `/home/u902881280/public_html/glitchvy` | Loaded in GitHub |
-| `ALLOW_DESTRUCTIVE_MIGRATIONS` | Variable | `0` (default) | Loaded in GitHub |
+| `DEPLOY_PATH_BACKEND` | Variable | `/home/u902881280/public_html/subdomains/glitchvy/back` | Loaded in GitHub |
+| `DEPLOY_PATH_FRONTEND` | Variable | `/home/u902881280/public_html/subdomains/glitchvy/front` | Loaded in GitHub |
 
 > **Note:** In GitHub Actions the private key is always provided as the **content** of the secret (not a file path). The installation block accepts both shapes for compatibility, but the GitHub secret holds the key content directly.
 
@@ -219,9 +247,9 @@ The migrations are **not** reverted automatically: check the release notes befor
 | `DB_CONNECTION` | `sqlite` or `mysql` (with `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`). |
 | `SANCTUM_STATEFUL_DOMAINS` | Derived from `FRONTEND_URL` — the host allowed to authenticate with a cookie. |
 | `CORS_ALLOWED_ORIGINS` | Derived from `FRONTEND_URL`. |
-| `GLITCHVY_RETENTION_DAYS` | Days an error report is kept (default `30`). |
-| `GLITCHVY_STORAGE_DISK` | Disk used for the screenshots (default `private`). |
-| `GLITCHVY_RATE_LIMIT` | Ingest throttle, `requests,minutes` (default `60,1`). |
+| `GLITCHVY_RETENTION_DAYS` | Days an error report is kept (default `30`). The setup does not ask for it. |
+| `GLITCHVY_STORAGE_DISK` | Disk used for the screenshots (default `private`). The setup does not ask for it. |
+| `GLITCHVY_RATE_LIMIT` | Ingest throttle, `requests,minutes` (default `60,1`). The setup does not ask for it. |
 | `GLITCHVY_LOGIN_RATE_LIMIT` | Login throttle (default `5,1`). |
 | `GLITCHVY_CSRF_RATE_LIMIT` | CSRF endpoint throttle (default `60,1`). |
 
@@ -252,7 +280,7 @@ The migrations are **not** reverted automatically: check the release notes befor
 ```bash
 # Create the first project and its API key (the SDK needs the key)
 ssh -p 65002 u902881280@195.179.236.189 \
-  "cd /home/u902881280/public_html/glitchvy/back && \
+  "cd /home/u902881280/public_html/subdomains/glitchvy/back && \
    php artisan glitchvy:create-project --name='My app' && \
    php artisan glitchvy:create-api-key --name='default'"
 

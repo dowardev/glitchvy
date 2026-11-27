@@ -1,0 +1,16 @@
+# Apache rules for the Glitchvy admin SPA.
+#
+# The SPA is served from the document root of the subdomain and it is a
+# single page application built with the history mode of the router:
+# every route is served by index.html, otherwise a reload on /login (or
+# on any project route) answers with a 404.
+#
+# The API is served from its own subdomain, so it needs no rule here.
+
+RewriteEngine On
+
+# SPA: serve index.html for any route that is not a real file/directory
+# so client-side navigation (Vue Router history mode) survives a refresh.
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . /index.html [L]

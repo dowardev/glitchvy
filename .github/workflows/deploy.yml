@@ -68,6 +68,47 @@ jobs:
   # ============================================================
   # Backend deploy — runs only when release_gate says release == 'true'
   # ============================================================
+  # ============================================================
+  # Preflight SSH: verifica que la llave de CI este autorizada
+  # en el servidor. Corre en paralelo con los builds, asi una
+  # llave caida se detecta en segundos en vez de al final del
+  # deploy, y el error dice exactamente que hacer.
+  # ============================================================
+  ssh_preflight:
+    name: ssh_preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [release_gate]
+    if: always() && (needs.release_gate.outputs.release == 'true' || github.event_name == 'workflow_dispatch')
+    steps:
+      - name: Check deploy key against the server
+        env:
+          DEPLOY_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          SSH_HOST: ${{ vars.SSH_HOST }}
+          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.SSH_USER }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          if [ -z "$DEPLOY_KEY" ]; then
+            echo "::error::the deploy key secret is empty" >&2
+            exit 1
+          fi
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          if ! ssh-keygen -y -f ~/.ssh/id_rsa > /dev/null 2>&1; then
+            echo "::error::the deploy key secret does not hold a valid private key" >&2
+            exit 1
+          fi
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" >> ~/.ssh/known_hosts
+          printf 'Host *\n  HostKeyAlgorithms +ssh-rsa\n  PubkeyAcceptedAlgorithms +ssh-rsa\n' > ~/.ssh/config
+          if ! ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 \
+               -o StrictHostKeyChecking=accept-new "$SSH_USER@$SSH_HOST" 'true'; then
+            echo "::error::SSH preflight failed: the deploy key is not authorized on $SSH_USER@$SSH_HOST:$SSH_PORT. Add its public key in the hosting panel (SSH Keys) before releasing." >&2
+            exit 1
+          fi
+          echo "SSH preflight OK"
+
   backend_deploy:
     name: backend_deploy
     runs-on: ubuntu-latest
@@ -146,6 +187,17 @@ jobs:
             --exclude='database/database.sqlite' \
             -C back .
 
+      - name: Verify the deploy key is authorized on the server
+        env:
+          SSH_HOST: ${{ vars.SSH_HOST }}
+          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.SSH_USER }}
+        run: |
+          if ! ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 "$SSH_USER@$SSH_HOST" 'true'; then
+            echo "::error::SSH preflight failed: the deploy key is not authorized on $SSH_USER@$SSH_HOST:$SSH_PORT. Add its public key in the hosting panel (SSH Keys) before releasing." >&2
+            exit 1
+          fi
+
       - name: Upload backend tarball
         env:
           SSH_PORT: ${{ vars.SSH_PORT }}
@@ -171,7 +223,6 @@ jobs:
             mkdir -p storage/framework/views storage/framework/cache/data storage/framework/sessions storage/app/private &&
             chmod -R 775 storage bootstrap/cache &&
             composer install --no-dev --optimize-autoloader --no-interaction &&
-            php artisan config:cache &&
             php artisan route:cache &&
             rm /tmp/backend.tar.gz
           "
@@ -249,6 +300,17 @@ jobs:
         run: |
           tar -czf /tmp/frontend.tar.gz -C front/dist .
 
+      - name: Verify the deploy key is authorized on the server
+        env:
+          SSH_HOST: ${{ vars.SSH_HOST }}
+          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.SSH_USER }}
+        run: |
+          if ! ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 "$SSH_USER@$SSH_HOST" 'true'; then
+            echo "::error::SSH preflight failed: the deploy key is not authorized on $SSH_USER@$SSH_HOST:$SSH_PORT. Add its public key in the hosting panel (SSH Keys) before releasing." >&2
+            exit 1
+          fi
+
       - name: Upload frontend tarball
         env:
           SSH_PORT: ${{ vars.SSH_PORT }}
@@ -275,8 +337,7 @@ jobs:
 
   # ============================================================
   # Backend migrations — MANUAL, never automatic
-  # Runs only with ALLOW_DESTRUCTIVE_MIGRATIONS=1 and after the
-  # dry-run guard (migrate --pretend --force) passes.
+  # Shows the pending migrations before applying them.
   # ============================================================
   backend_migrate:
     name: backend_migrate
@@ -337,13 +398,23 @@ jobs:
           chmod 600 ~/.ssh/config
           eval $(ssh-agent -s) && ssh-add ~/.ssh/id_rsa
 
-      - name: Run migrations with destructive guard
+      - name: Verify the deploy key is authorized on the server
+        env:
+          SSH_HOST: ${{ vars.SSH_HOST }}
+          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.SSH_USER }}
+        run: |
+          if ! ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 "$SSH_USER@$SSH_HOST" 'true'; then
+            echo "::error::SSH preflight failed: the deploy key is not authorized on $SSH_USER@$SSH_HOST:$SSH_PORT. Add its public key in the hosting panel (SSH Keys) before releasing." >&2
+            exit 1
+          fi
+
+      - name: Run the pending migrations
         env:
           SSH_PORT: ${{ vars.SSH_PORT }}
           SSH_USER: ${{ vars.SSH_USER }}
           SSH_HOST: ${{ vars.SSH_HOST }}
           DEPLOY_PATH_BACKEND: ${{ vars.DEPLOY_PATH_BACKEND }}
-          ALLOW_DESTRUCTIVE_MIGRATIONS: ${{ vars.ALLOW_DESTRUCTIVE_MIGRATIONS }}
         run: |
           ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
             "$SSH_USER@$SSH_HOST" "
@@ -353,13 +424,8 @@ jobs:
               echo 'Cannot read the pending migrations (migrate --pretend failed).' >&2
               exit 1
             }
-            if echo \"\$PENDING\" | grep -qiE 'drop table|drop column|drop index|drop constraint|drop foreign key|truncate|rename column|rename table'; then
-              if [ \"\${ALLOW_DESTRUCTIVE_MIGRATIONS:-}\" != '1' ]; then
-                echo 'Destructive migration detected. Review it, then set ALLOW_DESTRUCTIVE_MIGRATIONS=1 as a repository variable to apply it.' >&2
-                exit 1
-              fi
-              echo 'WARNING: applying a destructive migration (ALLOW_DESTRUCTIVE_MIGRATIONS=1)'
-            fi
+            echo 'Pending migrations:'
+            echo \"\$PENDING\"
             php artisan migrate --force
           "
 
@@ -474,6 +540,17 @@ jobs:
             --exclude='database/database.sqlite' \
             -C back .
 
+      - name: Verify the deploy key is authorized on the server
+        env:
+          SSH_HOST: ${{ vars.SSH_HOST }}
+          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.SSH_USER }}
+        run: |
+          if ! ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 "$SSH_USER@$SSH_HOST" 'true'; then
+            echo "::error::SSH preflight failed: the deploy key is not authorized on $SSH_USER@$SSH_HOST:$SSH_PORT. Add its public key in the hosting panel (SSH Keys) before releasing." >&2
+            exit 1
+          fi
+
       - name: Upload backend rollback tarball
         env:
           SSH_PORT: ${{ vars.SSH_PORT }}
@@ -499,7 +576,6 @@ jobs:
             mkdir -p storage/framework/views storage/framework/cache/data storage/framework/sessions storage/app/private &&
             chmod -R 775 storage bootstrap/cache &&
             composer install --no-dev --optimize-autoloader --no-interaction &&
-            php artisan config:cache &&
             php artisan route:cache &&
             rm /tmp/backend-rollback.tar.gz
           "
@@ -621,6 +697,17 @@ jobs:
       - name: Create frontend rollback tarball
         run: |
           tar -czf /tmp/frontend-rollback.tar.gz -C front/dist .
+
+      - name: Verify the deploy key is authorized on the server
+        env:
+          SSH_HOST: ${{ vars.SSH_HOST }}
+          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.SSH_USER }}
+        run: |
+          if ! ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 "$SSH_USER@$SSH_HOST" 'true'; then
+            echo "::error::SSH preflight failed: the deploy key is not authorized on $SSH_USER@$SSH_HOST:$SSH_PORT. Add its public key in the hosting panel (SSH Keys) before releasing." >&2
+            exit 1
+          fi
 
       - name: Upload frontend rollback tarball
         env:

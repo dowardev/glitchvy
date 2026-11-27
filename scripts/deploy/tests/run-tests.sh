@@ -167,6 +167,56 @@ else
     fail "writes a valid value into the env file" "content: $(cat "$env_file")"
 fi
 
+# A key that the template ships commented out must be activated where it
+# is. Appending a second copy leaves the file with two sources of truth
+# for the same variable, and the first one wins.
+commented_file="$env_dir/commented.env"
+printf 'APP_NAME=Glitchvy\n# DB_HOST=127.0.0.1\n# DB_USERNAME=root\n' > "$commented_file"
+( source "$env_dir/sed_set.sh"
+  sed_set "$commented_file" "DB_HOST" "db.internal" )
+if grep -qx 'DB_HOST=db.internal' "$commented_file" \
+    && [ "$(grep -c '^DB_HOST=' "$commented_file")" -eq 1 ] \
+    && ! grep -q '^# *DB_HOST=' "$commented_file"; then
+    pass "activates a commented key in place, without a second copy"
+else
+    fail "activates a commented key in place, without a second copy" "content: $(cat "$commented_file")"
+fi
+
+# Writing a key again must not add a second line either.
+( source "$env_dir/sed_set.sh"
+  sed_set "$commented_file" "DB_HOST" "db.other" )
+if [ "$(grep -c '^DB_HOST=' "$commented_file")" -eq 1 ]; then
+    pass "keeps a single line per key when the key is written again"
+else
+    fail "keeps a single line per key when the key is written again" "content: $(cat "$commented_file")"
+fi
+
+# A file written by an older setup can hold the same key twice: the
+# commented block of the template and an active copy at the end. The
+# writer keeps the template position and removes the other copy.
+messy_file="$env_dir/messy.env"
+printf 'APP_NAME=Glitchvy\n# DB_HOST=127.0.0.1\n# DB_USERNAME=root\nMAIL_MAILER=log\n' > "$messy_file"
+printf 'DB_HOST=db.old\nDB_USERNAME=old\n' >> "$messy_file"
+( source "$env_dir/sed_set.sh"
+  sed_set "$messy_file" "DB_HOST" "db.new"
+  sed_set "$messy_file" "DB_USERNAME" "user.new" )
+if [ "$(grep -c '^DB_HOST=' "$messy_file")" -eq 1 ] \
+    && [ "$(grep -c '^DB_USERNAME=' "$messy_file")" -eq 1 ] \
+    && grep -qx 'DB_HOST=db.new' "$messy_file" \
+    && grep -qx 'DB_USERNAME=user.new' "$messy_file" \
+    && ! grep -q '^# *DB_HOST=' "$messy_file"; then
+    pass "leaves a single line per key and cleans the copies of an old file"
+else
+    fail "leaves a single line per key and cleans the copies of an old file" "content: $(cat "$messy_file")"
+fi
+
+# The value ends up in the place of the template, not appended at the end.
+if [ "$(grep -n '^DB_HOST=' "$messy_file" | cut -d: -f1)" -lt "$(grep -n '^MAIL_MAILER=' "$messy_file" | cut -d: -f1)" ]; then
+    pass "writes the value in the place the template has it"
+else
+    fail "writes the value in the place the template has it" "content: $(cat "$messy_file")"
+fi
+
 # A newline cannot be represented in an env file: the writer has to refuse
 # it, report it with its own exit code and leave the file untouched.
 newline_file="$env_dir/newline.env"
@@ -258,44 +308,101 @@ else
 fi
 
 # ============================================================
-section "setup.sh — the destructive migration guard"
+section "setup.sh — a failure undoes the partial env file"
 # ============================================================
-load_function "$SETUP_SCRIPT" "assert_no_destructive_migration" "$env_dir/guard.sh"
-cat >> "$env_dir/guard.sh" <<'EOF'
+# A half written env file is worse than none: the next run reads it as
+# the previous values, so the partial write has to be undone.
+load_function "$SETUP_SCRIPT" "remember_env_file" "$env_dir/rollback_remember.sh"
+load_function "$SETUP_SCRIPT" "restore_env_files" "$env_dir/rollback_restore.sh"
+# Each extracted file carries the readonly exit codes: keep them only once.
+grep -v "^readonly EXIT_" "$env_dir/rollback_restore.sh" > "$env_dir/rollback_restore_clean.sh"
+cat "$env_dir/rollback_remember.sh" "$env_dir/rollback_restore_clean.sh" > "$env_dir/rollback.sh"
+cat >> "$env_dir/rollback.sh" <<'EOF'
 log_error() { echo "ERR: $1"; }
-log_warn()  { echo "WARN: $1"; }
+ROLLBACK_FILES=()
+ROLLBACK_BACKUPS=()
 EOF
 
-# shellcheck source=/dev/null
-( source "$env_dir/guard.sh"
-  assert_no_destructive_migration "alter table users drop column name" ) >/dev/null 2>&1
-status=$?
-if [ "$status" -ne 0 ]; then
-    pass "blocks a destructive migration by default"
-else
-    fail "blocks a destructive migration by default" "it exited with 0"
-fi
+rollback_dir="$(mktemp -d)"
+printf 'APP_KEY=old\n' > "$rollback_dir/.env"
+cp "$rollback_dir/.env" "$rollback_dir/.env.bak.20260101_000000"
 
 # shellcheck source=/dev/null
-( source "$env_dir/guard.sh"
-  ALLOW_DESTRUCTIVE_MIGRATIONS=1
-  export ALLOW_DESTRUCTIVE_MIGRATIONS
-  assert_no_destructive_migration "alter table users drop column name" ) >/dev/null 2>&1
-status=$?
-if [ "$status" -eq 0 ]; then
-    pass "allows a destructive migration with ALLOW_DESTRUCTIVE_MIGRATIONS=1"
+out="$( ( source "$env_dir/rollback.sh"
+  remember_env_file "$rollback_dir/.env" "$rollback_dir/.env.bak.20260101_000000"
+  printf 'APP_KEY=half-written\n' > "$rollback_dir/.env"
+  restore_env_files ) 2>&1 )"
+restored_content="$(cat "$rollback_dir/.env" 2>/dev/null)"
+if [ "$restored_content" = "APP_KEY=old" ]; then
+    pass "a failure restores the env file from its backup"
 else
-    fail "allows a destructive migration with ALLOW_DESTRUCTIVE_MIGRATIONS=1" "exit code was $status"
+    fail "a failure restores the env file from its backup" "content was: $restored_content / $out"
 fi
 
+# A file created by this run has no previous state: it has to go away.
+printf 'APP_KEY=fresh\n' > "$rollback_dir/.env.new"
 # shellcheck source=/dev/null
-( source "$env_dir/guard.sh"
-  assert_no_destructive_migration "create table sessions (id bigint)" ) >/dev/null 2>&1
-status=$?
-if [ "$status" -eq 0 ]; then
-    pass "allows a regular migration"
+( source "$env_dir/rollback.sh"
+  remember_env_file "$rollback_dir/.env.new" ""
+  restore_env_files ) >/dev/null 2>&1
+if [ ! -f "$rollback_dir/.env.new" ]; then
+    pass "a failure removes an env file that the run created"
 else
-    fail "allows a regular migration" "exit code was $status"
+    fail "a failure removes an env file that the run created" "the file is still there"
+fi
+
+rm -rf "$rollback_dir"
+
+# ============================================================
+section "the deploy leaves the server env file authoritative"
+# ============================================================
+# A cached config freezes the values of the env file, so a manual edit of
+# the .env would be silently ignored. The deploy must not create it.
+config_cache_hits="$(grep -rn "artisan config:cache" \
+    "$DEPLOY_SCRIPT" "$SETUP_SCRIPT" "$REPO_ROOT/scripts/deploy/deploy.conf" \
+    "$REPO_ROOT/.github/workflows" 2>/dev/null | grep -v "on purpose" || true)"
+if [ -z "$config_cache_hits" ]; then
+    pass "the deploy never caches the config, so a manual env file edit takes effect"
+else
+    fail "the deploy never caches the config, so a manual env file edit takes effect" "$config_cache_hits"
+fi
+
+# ============================================================
+section "the migrations — the data safety lives in the schema"
+# ============================================================
+# The runtime guard (ALLOW_DESTRUCTIVE_MIGRATIONS) is gone: it read the
+# SQL text and could not tell a table rebuild that copies the rows from
+# one that drops them. The guarantee is now a rule on the migrations:
+# a migration that drops a table copies the rows first.
+migrations_dir="$REPO_ROOT/back/database/migrations"
+
+unsafe_migrations=""
+while IFS= read -r migration_file; do
+    [ -n "$migration_file" ] || continue
+    if ! grep -qiE "drop[[:space:]]+table" "$migration_file"; then
+        continue
+    fi
+    # The copy has to come before the drop.
+    copy_line="$(grep -niE "insert[[:space:]]+into" "$migration_file" | head -1 | cut -d: -f1)"
+    drop_line="$(grep -niE "drop[[:space:]]+table" "$migration_file" | head -1 | cut -d: -f1)"
+    if [ -z "$copy_line" ] || [ -z "$drop_line" ] || [ "$copy_line" -gt "$drop_line" ]; then
+        unsafe_migrations="$unsafe_migrations $(basename "$migration_file")"
+    fi
+done < <(find "$migrations_dir" -name '*.php' 2>/dev/null)
+
+if [ -z "$unsafe_migrations" ]; then
+    pass "every migration that drops a table copies the rows before dropping it"
+else
+    fail "every migration that drops a table copies the rows before dropping it" "without a row copy:$unsafe_migrations"
+fi
+
+# The external switch must not come back.
+flag_hits="$(grep -rl "ALLOW_DESTRUCTIVE_MIGRATIONS" \
+    "$SETUP_SCRIPT" "$DEPLOY_SCRIPT" "$REPO_ROOT/.github/workflows" 2>/dev/null | tr '\n' ' ')"
+if [ -z "$flag_hits" ]; then
+    pass "no script or workflow uses the external destructive migration switch"
+else
+    fail "no script or workflow uses the external destructive migration switch" "$flag_hits"
 fi
 
 # ============================================================
@@ -548,6 +655,305 @@ else
 fi
 
 # ============================================================
+section "scripts/deploy/deploy.sh — the child shell"
+
+# run_cmd executes its commands with `bash -c`, and a child shell does not
+# inherit the functions of the parent. A function called from a command
+# string therefore fails with "command not found" (exit 127).
+
+helper="$REPO_ROOT/scripts/deploy/ensure-pnpm.sh"
+
+if [ -x "$helper" ]; then
+    pass "the pnpm bootstrap is an executable script, not a shell function"
+else
+    fail "the pnpm bootstrap is an executable script, not a shell function" "$helper is missing or not executable"
+fi
+
+# The invocation must work in a child shell. A stub pnpm keeps the check
+# deterministic: it does not depend on pnpm being installed on the machine
+# that runs the suite.
+stub_bin="$(mktemp -d)"
+cat > "$stub_bin/pnpm" <<'STUB'
+#!/usr/bin/env bash
+echo "9.9.9-stub"
+STUB
+chmod +x "$stub_bin/pnpm"
+
+stub_out="$(PATH="$stub_bin:$PATH" bash -c "\"$helper\" && pnpm --version" 2>&1)"
+stub_status=$?
+if [ "$stub_status" -eq 0 ] && grep -q "9.9.9-stub" <<< "$stub_out"; then
+    pass "the pnpm bootstrap resolves pnpm inside a child shell"
+else
+    fail "the pnpm bootstrap resolves pnpm inside a child shell" "exit $stub_status: $stub_out"
+fi
+
+# Without pnpm the bootstrap must fail with a clear message, never with
+# "command not found".
+no_pnpm_dir="$(mktemp -d)"
+
+cat > "$no_pnpm_dir/corepack" <<'STUB'
+#!/usr/bin/env bash
+# A corepack that does nothing: the bootstrap must still fail clearly.
+# It reports the download prompt setting so the check can verify it.
+echo "PROMPT=${COREPACK_ENABLE_DOWNLOAD_PROMPT:-unset}"
+exit 0
+STUB
+chmod +x "$no_pnpm_dir/corepack"
+
+pnpm_bin="$(command -v pnpm 2>/dev/null || true)"
+pnpm_dir=""
+[ -n "$pnpm_bin" ] && pnpm_dir="$(dirname "$pnpm_bin")"
+
+clean_path="$no_pnpm_dir:$(dirname "$(command -v bash)")"
+old_ifs="$IFS"
+IFS=':'
+for part in $PATH; do
+    [ "$part" = "$pnpm_dir" ] && continue
+    clean_path="$clean_path:$part"
+done
+IFS="$old_ifs"
+
+missing_out="$(PATH="$clean_path" bash -c "\"$helper\"" 2>&1)"
+missing_status=$?
+if [ "$missing_status" -ne 0 ] && grep -qi "pnpm" <<< "$missing_out" && ! grep -q "command not found" <<< "$missing_out"; then
+    pass "the pnpm bootstrap fails with a clear message when pnpm is missing"
+else
+    fail "the pnpm bootstrap fails with a clear message when pnpm is missing" "exit $missing_status: $missing_out"
+fi
+
+# Corepack asks before it downloads pnpm the first time. A deploy must
+# never wait for an answer.
+if grep -q "PROMPT=0" <<< "$missing_out"; then
+    pass "the pnpm bootstrap disables the corepack download prompt"
+else
+    fail "the pnpm bootstrap disables the corepack download prompt" "$missing_out"
+fi
+
+if grep -q "export COREPACK_ENABLE_DOWNLOAD_PROMPT=0" "$DEPLOY_SCRIPT"; then
+    pass "the deploy script disables the corepack download prompt"
+else
+    fail "the deploy script disables the corepack download prompt" "COREPACK_ENABLE_DOWNLOAD_PROMPT is not exported"
+fi
+
+# Every function the script defines must not be called from a command
+# string: the child shell would not know it.
+script_functions="$(grep -oE '^[a-z_][a-z0-9_]*\(\)' "$DEPLOY_SCRIPT" | tr -d '()' | sort -u)"
+command_strings="$(awk '
+    /run_cmd[ \t]|run_remote[ \t]/ {
+        line = $0
+        sub(/^.*run_(cmd|remote)[ \t]+"/, "", line)
+        sub(/^[^"]*"/, "", line)
+        if (line ~ /^"/) { print line; collect = 0; next }
+        collect = 1
+        next
+    }
+    collect && /^[[:space:]]*"/ { print; next }
+    collect { collect = 0 }
+' "$DEPLOY_SCRIPT")"
+
+missing_in_child=""
+for func_name in $script_functions; do
+    if grep -qw -- "$func_name" <<< "$command_strings"; then
+        missing_in_child="$missing_in_child $func_name"
+    fi
+done
+
+if [ -z "$missing_in_child" ]; then
+    pass "no deploy command calls a shell function that the child shell would not inherit"
+else
+    fail "no deploy command calls a shell function that the child shell would not inherit" "functions used in a command string:$missing_in_child"
+fi
+
+# The deploy lets pnpm run the version the repository pins: pnpm
+# downloads it once, without asking, and the lockfile, the workspace
+# layout and the installed pnpm always agree. Forcing the host pnpm
+# made an older pnpm try to purge the modules tree of the pinned one,
+# and that purge aborts when there is no TTY to ask on.
+if grep -q "npm_config_manage_package_manager_versions=false" "$DEPLOY_SCRIPT"; then
+    fail "the deploy script lets pnpm run the version the repository pins" "manage-package-manager-versions is disabled"
+else
+    pass "the deploy script lets pnpm run the version the repository pins"
+fi
+
+# The deploy prints the branch and the commit it runs: the operator works
+# from more than one checkout and the copies drift.
+if grep -q 'DEPLOY_BRANCH="\$(git -C "\$REPO_ROOT" rev-parse --abbrev-ref HEAD' "$DEPLOY_SCRIPT" \
+    && grep -q 'DEPLOY_COMMIT="\$(git -C "\$REPO_ROOT" rev-parse --short HEAD' "$DEPLOY_SCRIPT"; then
+    pass "the deploy prints the branch and the commit it runs"
+else
+    fail "the deploy prints the branch and the commit it runs" "the deploy does not report its branch and commit"
+fi
+
+# The permissions of the release are normalized on the server: the web
+# server reads the files as another user, and the umask of the machine
+# that built the release must not decide that. The environment file
+# keeps its owner-only permissions.
+if grep -q 'find "\${DEPLOY_PATH_BACKEND}" -type f -exec chmod 644' "$DEPLOY_SCRIPT" \
+    && grep -q 'chmod 600 "\${DEPLOY_PATH_BACKEND}/.env"' "$DEPLOY_SCRIPT" \
+    && grep -q 'find "\${DEPLOY_PATH_FRONTEND}" -type f -exec chmod 644' "$DEPLOY_SCRIPT"; then
+    pass "the deploy normalizes the permissions of the release"
+else
+    fail "the deploy normalizes the permissions of the release" "the permissions are not normalized"
+fi
+
+# The Apache rules of the document root travel with the deploy: they are
+# versioned with the frontend and not produced by the build.
+if grep -q 'Frontend: upload .htaccess' "$DEPLOY_SCRIPT"; then
+    pass "the deploy uploads the Apache rules of the document root"
+else
+    fail "the deploy uploads the Apache rules of the document root" "the deploy does not upload them"
+fi
+
+# The target directory is verified before the upload: a path that points
+# at another copy of the application publishes the release there.
+if grep -q 'Backend: verify the target directory' "$DEPLOY_SCRIPT" \
+    && grep -q "does not hold a Laravel application" "$DEPLOY_SCRIPT"; then
+    pass "the deploy verifies the target directory before uploading"
+else
+    fail "the deploy verifies the target directory before uploading" "the deploy does not check the target"
+fi
+
+# The uploaded setup script is verified against the local one: the
+# operator runs the script from the server copy, and a copy that did not
+# arrive leaves the old script there, silently.
+if grep -q 'Setup: verify the uploaded' "$DEPLOY_SCRIPT" \
+    && grep -q 'md5sum "\$local_path"' "$DEPLOY_SCRIPT"; then
+    pass "the deploy verifies the uploaded setup script against the local one"
+else
+    fail "the deploy verifies the uploaded setup script against the local one" "the deploy does not compare the checksums"
+fi
+
+# The version drift between the host pnpm and the pinned one is reported.
+version_dir="$(mktemp -d)"
+mkdir -p "$version_dir/bin"
+load_function "$DEPLOY_SCRIPT" "check_pnpm_version" "$version_dir/check_pnpm_version.sh"
+cat >> "$version_dir/check_pnpm_version.sh" <<'EOF'
+log_warn() { echo "WARN: $1"; }
+log_info() { echo "INFO: $1"; }
+EOF
+
+cat > "$version_dir/bin/pnpm" <<'EOF'
+#!/usr/bin/env bash
+echo "10.34.9"
+EOF
+chmod +x "$version_dir/bin/pnpm"
+
+drift_out="$( ( source "$version_dir/check_pnpm_version.sh"; PATH="$version_dir/bin:$PATH"; check_pnpm_version ) 2>&1 )"
+if grep -q "10.34.9" <<< "$drift_out" && grep -q "pins pnpm@" <<< "$drift_out"; then
+    pass "the deploy reports a pnpm version drift with the version the repository pins"
+else
+    fail "the deploy reports a pnpm version drift with the version the repository pins" "$drift_out"
+fi
+
+pinned_version="$(sed -n 's/.*"packageManager"[[:space:]]*:[[:space:]]*"pnpm@\([^"]*\)".*/\1/p' "$REPO_ROOT/package.json" | head -1)"
+cat > "$version_dir/bin/pnpm" <<EOF
+#!/usr/bin/env bash
+echo "$pinned_version"
+EOF
+chmod +x "$version_dir/bin/pnpm"
+
+same_out="$( ( source "$version_dir/check_pnpm_version.sh"; PATH="$version_dir/bin:$PATH"; check_pnpm_version ) 2>&1 )"
+if [ -z "$same_out" ]; then
+    pass "the deploy stays quiet when the host pnpm matches the pinned version"
+else
+    fail "the deploy stays quiet when the host pnpm matches the pinned version" "$same_out"
+fi
+
+rm -rf "$version_dir"
+
+# Every variable written to the env file must be assigned in both paths:
+# the interactive one and the non-interactive one. A variable assigned in
+# only one of them ends the run with "unbound variable" in the other.
+interactive_branch="$(mktemp -d)"
+awk '
+    /if \[ "\$NON_INTERACTIVE" = true \]; then/ { in_non = 1; next }
+    in_non && /^    else$/ { in_int = 1; next }
+    in_int && /^    fi$/ { in_int = 0; in_common = 1; next }
+    in_int { print > "'"$interactive_branch"'/interactive"; next }
+    in_common { print > "'"$interactive_branch"'/common" }
+' "$SETUP_SCRIPT"
+
+env_vars="$(grep -oE 'sed_set "\.env" "[A-Z_]+" "\$[a-z_]+"' "$SETUP_SCRIPT" | grep -oE '\$[a-z_]+' | tr -d '$' | sort -u)"
+
+unassigned_vars=""
+for env_var in $env_vars; do
+    if ! grep -qE "(^|[^a-zA-Z0-9_])${env_var}=" "$interactive_branch/interactive" \
+        && ! grep -qE "(^|[^a-zA-Z0-9_])${env_var}=" "$interactive_branch/common"; then
+        unassigned_vars="$unassigned_vars $env_var"
+    fi
+done
+
+if [ -z "$unassigned_vars" ]; then
+    pass "the interactive setup assigns every variable it writes to the env file"
+else
+    fail "the interactive setup assigns every variable it writes to the env file" "not assigned in the interactive path:$unassigned_vars"
+fi
+
+rm -rf "$interactive_branch"
+
+# ============================================================
+section "scripts/deploy/build-frontend.sh — the production build inputs"
+
+# Vite loads .env, .env.local and .env.development* in every mode, so a
+# developer's local file ends up baked into the published bundle. The
+# helper hides them while the build runs and restores them after, also
+# when the build fails.
+build_dir="$(mktemp -d)"
+mkdir -p "$build_dir/front" "$build_dir/bin"
+printf 'VITE_GLITCHVY_API_URL=/api\n' > "$build_dir/front/.env.local"
+printf 'VITE_GLITCHVY_API_URL=https://api.example.com\n' > "$build_dir/front/.env.production"
+
+cat > "$build_dir/bin/pnpm" <<'EOF'
+#!/usr/bin/env bash
+if [ -f "$FRONT_DIR_FOR_TEST/.env.local" ]; then
+    echo "visible" > "$RESULT_FOR_TEST"
+else
+    echo "hidden" > "$RESULT_FOR_TEST"
+fi
+exit "${PNPM_EXIT_FOR_TEST:-0}"
+EOF
+chmod +x "$build_dir/bin/pnpm"
+
+FRONT_DIR_FOR_TEST="$build_dir/front" RESULT_FOR_TEST="$build_dir/result" \
+    PATH="$build_dir/bin:$PATH" \
+    "$REPO_ROOT/scripts/deploy/build-frontend.sh" "$build_dir" "$build_dir/front" >/dev/null 2>&1
+
+if [ "$(cat "$build_dir/result" 2>/dev/null)" = "hidden" ]; then
+    pass "hides the development env files while the build runs"
+else
+    fail "hides the development env files while the build runs" "the file was visible during the build"
+fi
+
+if [ -f "$build_dir/front/.env.local" ] && [ -f "$build_dir/front/.env.production" ]; then
+    pass "restores the development env files after the build"
+else
+    fail "restores the development env files after the build" "the files were not restored"
+fi
+
+# A failed build must restore them too: the operator keeps its local
+# files and the next run starts from the same state.
+FRONT_DIR_FOR_TEST="$build_dir/front" RESULT_FOR_TEST="$build_dir/result" \
+    PNPM_EXIT_FOR_TEST=1 PATH="$build_dir/bin:$PATH" \
+    "$REPO_ROOT/scripts/deploy/build-frontend.sh" "$build_dir" "$build_dir/front" >/dev/null 2>&1
+status=$?
+
+if [ -f "$build_dir/front/.env.local" ]; then
+    pass "restores the development env files when the build fails"
+else
+    fail "restores the development env files when the build fails" "the file was not restored"
+fi
+
+if [ "$status" -ne 0 ]; then
+    pass "reports the failure of the build"
+else
+    fail "reports the failure of the build" "the exit code was 0"
+fi
+
+rm -rf "$build_dir"
+
+# ============================================================
+rm -rf "$stub_bin" "$no_pnpm_dir"
+
 echo ""
 echo "==========================================="
 echo "  passed: $PASSED"

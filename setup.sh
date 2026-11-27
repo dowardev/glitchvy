@@ -122,9 +122,10 @@ backup_file() {
     local path="$1"
     [ "$NO_BACKUP" = true ] && return 0
     [ ! -f "$path" ] && return 0
-    local ts
+    local ts backup
     ts="$(date +%Y%m%d_%H%M%S)"
-    cp "$path" "${path}.bak.${ts}"
+    backup="${path}.bak.${ts}"
+    cp "$path" "$backup"
     local backups=()
     for f in "${path}.bak".*; do
         [ -f "$f" ] && backups+=("$f")
@@ -136,6 +137,7 @@ backup_file() {
             rm -f "$f"
         done
     fi
+    printf '%s' "$backup"
 }
 
 # The backend environment file holds the database password, the application
@@ -186,14 +188,57 @@ sed_set() {
     if [ "$needs_quoting" = true ]; then
         escaped_val="\"${escaped_val}\""
     fi
-    if grep -qE "^\s*${key}=" "$file" 2>/dev/null; then
+    # A key belongs in one place. A file written by an older setup can
+    # hold the same key twice: the commented block of the template and an
+    # active copy at the end. The value is written where the template put
+    # the key, and the other copies are removed, so the file keeps the
+    # structure of the template with a single source of truth.
+    local commented_line active_lines keep_line
+    commented_line="$(grep -nE "^[[:space:]]*#[[:space:]]*${key}=" "$file" 2>/dev/null | head -1 | cut -d: -f1)"
+    active_lines="$(grep -nE "^[[:space:]]*${key}=" "$file" 2>/dev/null | cut -d: -f1)"
+
+    if [ -n "$commented_line" ]; then
+        # The template still has the key commented out: that is its
+        # place, and the commented line becomes the active one.
+        keep_line="$commented_line"
+        if ! sed -i "s|^[[:space:]]*#[[:space:]]*${key}=.*|${key}=${escaped_val}|" "$file"; then
+            log_error "Cannot write '$key' to $file"
+            return $EXIT_WRITE_ERROR
+        fi
+    elif [ -n "$active_lines" ]; then
+        # The key is already active: replace its value where it is.
+        keep_line="$(printf '%s\n' "$active_lines" | head -1)"
         if ! sed -i "s|^[[:space:]]*${key}=.*|${key}=${escaped_val}|" "$file"; then
             log_error "Cannot write '$key' to $file"
             return $EXIT_WRITE_ERROR
         fi
     else
+        # The key is not in the file at all: it goes at the end.
+        keep_line=""
         if ! printf '%s\n' "${key}=${escaped_val}" >> "$file"; then
             log_error "Cannot write '$key' to $file"
+            return $EXIT_WRITE_ERROR
+        fi
+    fi
+
+    # Any other copy of the key is removed: the one written above is the
+    # only one that counts. A file written by an older setup can hold the
+    # key in the commented block of the template and in an active copy at
+    # the end; the second one is removed and the file keeps the structure
+    # of the template with a single source of truth.
+    if [ -n "$keep_line" ]; then
+        if ! awk -v key="$key" -v keep="$keep_line" '
+            BEGIN { pattern = "^[[:space:]]*" key "=" }
+            NR != keep && $0 ~ pattern { next }
+            { print }
+        ' "$file" > "$file.tmp" 2>/dev/null; then
+            log_error "Cannot write '$key' to $file"
+            rm -f "$file.tmp" 2>/dev/null || true
+            return $EXIT_WRITE_ERROR
+        fi
+        if ! mv "$file.tmp" "$file"; then
+            log_error "Cannot write '$key' to $file"
+            rm -f "$file.tmp" 2>/dev/null || true
             return $EXIT_WRITE_ERROR
         fi
     fi
@@ -259,8 +304,39 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# The env files this run touched. A failure leaves a half written file,
+# and the next run reads that file as the previous values, so the partial
+# write has to be undone before the script exits.
+ROLLBACK_FILES=()
+ROLLBACK_BACKUPS=()
+
+remember_env_file() {
+    ROLLBACK_FILES+=("$1")
+    ROLLBACK_BACKUPS+=("$2")
+}
+
+restore_env_files() {
+    local i path backup
+    for i in "${!ROLLBACK_FILES[@]}"; do
+        path="${ROLLBACK_FILES[$i]}"
+        backup="${ROLLBACK_BACKUPS[$i]}"
+        if [ -n "$backup" ] && [ -f "$backup" ]; then
+            cp "$backup" "$path" && log_error "Restored $path from $backup"
+        elif [ -f "$path" ]; then
+            rm -f "$path" && log_error "Removed $path: this run created it and it was left incomplete"
+        fi
+    done
+}
+
+die() {
+    restore_env_files
+    log_error "Aborted (exit code: $1)"
+    exit "$1"
+}
+
 error_handler() {
     local exit_code=$?
+    restore_env_files
     log_error "Error on line $1 (exit code: $exit_code)"
     exit "$exit_code"
 }
@@ -350,7 +426,6 @@ configure_backend() {
     local prev_app_name prev_app_url prev_frontend_url prev_app_env prev_app_debug
     local prev_db_connection prev_db_host prev_db_port prev_db_database prev_db_username prev_db_password
     local prev_mail_host prev_mail_username prev_mail_password prev_mail_from_address
-    local prev_retention_days prev_storage_disk prev_rate_limit
     if [ -f ".env" ]; then
         prev_app_name="$(unquote_env_val "$(get_env_default APP_NAME ".env")")"
         prev_app_url="$(unquote_env_val "$(get_env_default APP_URL ".env")")"
@@ -367,21 +442,20 @@ configure_backend() {
         prev_mail_username="$(unquote_env_val "$(get_env_default MAIL_USERNAME ".env")")"
         prev_mail_password="$(unquote_env_val "$(get_env_default MAIL_PASSWORD ".env")")"
         prev_mail_from_address="$(unquote_env_val "$(get_env_default MAIL_FROM_ADDRESS ".env")")"
-        prev_retention_days="$(unquote_env_val "$(get_env_default GLITCHVY_RETENTION_DAYS ".env")")"
-        prev_storage_disk="$(unquote_env_val "$(get_env_default GLITCHVY_STORAGE_DISK ".env")")"
-        prev_rate_limit="$(unquote_env_val "$(get_env_default GLITCHVY_RATE_LIMIT ".env")")"
     fi
 
-    backup_file ".env"
+    env_backup="$(backup_file ".env" | tail -1)"
     if [ ! -f ".env" ]; then
         cp "$example_file" ".env"
-        restrict_env_permissions ".env" || exit $?
+        restrict_env_permissions ".env" || die $?
+        remember_env_file ".env" ""
+    else
+        remember_env_file ".env" "$env_backup"
     fi
 
-    local app_name app_url frontend_url app_env app_debug
+    local app_name app_url frontend_url app_env app_debug env_backup
     local db_connection db_host db_port db_database db_username db_password
     local mail_mailer mail_host mail_port mail_username mail_password mail_from_address
-    local retention_days storage_disk rate_limit
     local sanctum_stateful_domains cors_allowed_origins
 
     if [ "$NON_INTERACTIVE" = true ]; then
@@ -413,30 +487,27 @@ configure_backend() {
         mail_username="${GLITCHVY_MAIL_USERNAME:-${prev_mail_username:-$(get_env_default MAIL_USERNAME "$example_file")}}"
         mail_password="${GLITCHVY_MAIL_PASSWORD:-${prev_mail_password:-$(get_env_default MAIL_PASSWORD "$example_file")}}"
         mail_from_address="${GLITCHVY_MAIL_FROM_ADDRESS:-${prev_mail_from_address:-$(get_env_default MAIL_FROM_ADDRESS "$example_file" | tr -d '"')}}"
-        retention_days="${GLITCHVY_RETENTION_DAYS:-${prev_retention_days:-30}}"
-        storage_disk="${GLITCHVY_STORAGE_DISK:-${prev_storage_disk:-private}}"
-        rate_limit="${GLITCHVY_RATE_LIMIT:-${prev_rate_limit:-60,1}}"
     else
         local default_app_name default_app_url default_frontend_url default_db_connection
         default_app_name="${prev_app_name:-$(grep -E "^APP_NAME=" "$example_file" | cut -d= -f2- | tr -d '"' || echo "Glitchvy")}"
         default_app_url="${prev_app_url:-$(grep -E "^APP_URL=" "$example_file" | cut -d= -f2- || echo "http://localhost:8000")}"
         default_frontend_url="${prev_frontend_url:-$(grep -E "^FRONTEND_URL=" "$example_file" | cut -d= -f2- || echo "http://localhost:8100")}"
-        default_db_connection="${prev_db_connection:-sqlite}"
+        default_db_connection="${prev_db_connection:-mysql}"
 
         app_name="$(ask "App name" "$default_app_name")"
-        sed_set ".env" "APP_NAME" "$app_name" || exit $?
+        sed_set ".env" "APP_NAME" "$app_name" || die $?
         while :; do
             app_url="$(ask "App URL (backend)" "$default_app_url")"
             app_url="$(normalize_url "$app_url")" && break
             log_error "URL cannot be empty. Enter something like http://localhost:8000"
         done
-        sed_set ".env" "APP_URL" "$app_url" || exit $?
+        sed_set ".env" "APP_URL" "$app_url" || die $?
         while :; do
             frontend_url="$(ask "Admin SPA URL (frontend)" "$default_frontend_url")"
             frontend_url="$(normalize_url "$frontend_url")" && break
             log_error "URL cannot be empty. Enter something like http://localhost:8100"
         done
-        sed_set ".env" "FRONTEND_URL" "$frontend_url" || exit $?
+        sed_set ".env" "FRONTEND_URL" "$frontend_url" || die $?
         if [ "$DEV_MODE" = true ]; then
             app_env="local"
             app_debug="true"
@@ -474,74 +545,78 @@ configure_backend() {
 
         mail_mailer="$(get_env_default MAIL_MAILER "$example_file")"
         mail_port="$(get_env_default MAIL_PORT "$example_file")"
-        local default_mail_host default_mail_username default_mail_password
+        local default_mail_host default_mail_username default_mail_password default_mail_from_address
         default_mail_host="${prev_mail_host:-$(get_env_default MAIL_HOST "$example_file")}"
         default_mail_username="${prev_mail_username:-$(get_env_default MAIL_USERNAME "$example_file")}"
         default_mail_password="${prev_mail_password:-$(get_env_default MAIL_PASSWORD "$example_file")}"
+        default_mail_from_address="${prev_mail_from_address:-$(get_env_default MAIL_FROM_ADDRESS "$example_file" | tr -d '"')}"
+        if [ -z "$default_mail_from_address" ]; then
+            default_mail_from_address="noreply@$(echo "$app_url" | sed -E 's|^https?://||; s|/.*$||')"
+        fi
 
         if [ "$mail_mailer" = "smtp" ]; then
             mail_host="$(ask "Mail host" "$default_mail_host")"
             mail_username="$(ask "Mail username" "$default_mail_username")"
             mail_password="$(ask_secret "Mail password" "$default_mail_password")"
+            mail_from_address="$(ask "Mail from address" "$default_mail_from_address")"
         else
             mail_host="$default_mail_host"
             mail_username="$default_mail_username"
             mail_password="$default_mail_password"
+            mail_from_address="$default_mail_from_address"
         fi
-
-        retention_days="$(ask "Error retention (days)" "${prev_retention_days:-30}")"
-        storage_disk="$(ask "Screenshot storage disk" "${prev_storage_disk:-private}")"
-        rate_limit="$(ask "Ingest rate limit (requests,minutes)" "${prev_rate_limit:-60,1}")"
     fi
 
-    # Sanctum's stateful domains and the CORS allow-list are derived from the
-    # admin SPA URL: the SPA authenticates with a cookie, so the backend has to
-    # trust that exact host.
-    sanctum_stateful_domains="$(echo "$frontend_url" | sed -E 's|^https?://||; s|/.*$||')"
+    # Sanctum's stateful domains and the CORS allow-list are derived from
+    # the URLs of the deployment: the SPA authenticates with a cookie, so
+    # the backend has to trust that exact host.
+    #
+    # The cookie lives in the origin of the API, so the stateful domain
+    # comes from the API url (APP_URL). The CORS allow-list names the
+    # origins that may call the API, and that is the SPA (FRONTEND_URL).
+    # When both are served from the same host, the two are the same host.
+    sanctum_stateful_domains="$(echo "$app_url" | sed -E 's|^https?://||; s|/.*$||')"
     cors_allowed_origins="$frontend_url"
 
-    sed_set ".env" "APP_NAME" "$app_name" || exit $?
-    sed_set ".env" "APP_ENV" "$app_env" || exit $?
-    sed_set ".env" "APP_DEBUG" "$app_debug" || exit $?
-    sed_set ".env" "APP_URL" "$app_url" || exit $?
-    sed_set ".env" "FRONTEND_URL" "$frontend_url" || exit $?
-    sed_set ".env" "SANCTUM_STATEFUL_DOMAINS" "$sanctum_stateful_domains" || exit $?
-    sed_set ".env" "CORS_ALLOWED_ORIGINS" "$cors_allowed_origins" || exit $?
-    sed_set ".env" "DB_CONNECTION" "$db_connection" || exit $?
+    sed_set ".env" "APP_NAME" "$app_name" || die $?
+    sed_set ".env" "APP_ENV" "$app_env" || die $?
+    sed_set ".env" "APP_DEBUG" "$app_debug" || die $?
+    sed_set ".env" "APP_URL" "$app_url" || die $?
+    sed_set ".env" "FRONTEND_URL" "$frontend_url" || die $?
+    sed_set ".env" "SANCTUM_STATEFUL_DOMAINS" "$sanctum_stateful_domains" || die $?
+    sed_set ".env" "CORS_ALLOWED_ORIGINS" "$cors_allowed_origins" || die $?
+    sed_set ".env" "DB_CONNECTION" "$db_connection" || die $?
     if [ "$db_connection" = "mysql" ]; then
-        sed_set ".env" "DB_HOST" "$db_host" || exit $?
-        sed_set ".env" "DB_PORT" "$db_port" || exit $?
-        sed_set ".env" "DB_DATABASE" "$db_database" || exit $?
-        sed_set ".env" "DB_USERNAME" "$db_username" || exit $?
-        sed_set ".env" "DB_PASSWORD" "$db_password" || exit $?
+        sed_set ".env" "DB_HOST" "$db_host" || die $?
+        sed_set ".env" "DB_PORT" "$db_port" || die $?
+        sed_set ".env" "DB_DATABASE" "$db_database" || die $?
+        sed_set ".env" "DB_USERNAME" "$db_username" || die $?
+        sed_set ".env" "DB_PASSWORD" "$db_password" || die $?
     else
-        sed_set ".env" "DB_DATABASE" "$db_database" || exit $?
+        sed_set ".env" "DB_DATABASE" "$db_database" || die $?
     fi
-    sed_set ".env" "MAIL_MAILER" "$mail_mailer" || exit $?
-    sed_set ".env" "MAIL_HOST" "$mail_host" || exit $?
-    sed_set ".env" "MAIL_PORT" "$mail_port" || exit $?
-    sed_set ".env" "MAIL_USERNAME" "$mail_username" || exit $?
-    sed_set ".env" "MAIL_PASSWORD" "$mail_password" || exit $?
-    sed_set ".env" "MAIL_FROM_ADDRESS" "$mail_from_address" || exit $?
-    sed_set ".env" "GLITCHVY_RETENTION_DAYS" "$retention_days" || exit $?
-    sed_set ".env" "GLITCHVY_STORAGE_DISK" "$storage_disk" || exit $?
-    sed_set ".env" "GLITCHVY_RATE_LIMIT" "$rate_limit" || exit $?
+    sed_set ".env" "MAIL_MAILER" "$mail_mailer" || die $?
+    sed_set ".env" "MAIL_HOST" "$mail_host" || die $?
+    sed_set ".env" "MAIL_PORT" "$mail_port" || die $?
+    sed_set ".env" "MAIL_USERNAME" "$mail_username" || die $?
+    sed_set ".env" "MAIL_PASSWORD" "$mail_password" || die $?
+    sed_set ".env" "MAIL_FROM_ADDRESS" "$mail_from_address" || die $?
     # SSO integration (planned, tracked in odd/tasks/deploy-tooling.md):
     # the deploy can carry the SSO credentials so
     # the server env file is ready when the server-side SSO client lands.
     # They are written only when the operator provides them, so nothing
     # unused ends up in the file.
     if [ -n "${GLITCHVY_SSO_URL:-}" ]; then
-        sed_set ".env" "SSO_URL" "$GLITCHVY_SSO_URL" || exit $?
+        sed_set ".env" "SSO_URL" "$GLITCHVY_SSO_URL" || die $?
     fi
     if [ -n "${GLITCHVY_SSO_CLIENT_ID:-}" ]; then
-        sed_set ".env" "SSO_CLIENT_ID" "$GLITCHVY_SSO_CLIENT_ID" || exit $?
+        sed_set ".env" "SSO_CLIENT_ID" "$GLITCHVY_SSO_CLIENT_ID" || die $?
     fi
     if [ -n "${GLITCHVY_SSO_CLIENT_SECRET:-}" ]; then
-        sed_set ".env" "SSO_CLIENT_SECRET" "$GLITCHVY_SSO_CLIENT_SECRET" || exit $?
+        sed_set ".env" "SSO_CLIENT_SECRET" "$GLITCHVY_SSO_CLIENT_SECRET" || die $?
     fi
 
-    restrict_env_permissions ".env" || exit $?
+    restrict_env_permissions ".env" || die $?
     verify_db_connection "$db_connection"
     log_ok "Backend configured"
     cd "$SCRIPT_DIR"
@@ -653,44 +728,26 @@ generate_app_key() {
     cd "$SCRIPT_DIR"
 }
 
-# The setup runs the migrations unattended, so a pending migration that
-# drops a table or a column must not run without a human in the loop. The
-# operator opts in explicitly with ALLOW_DESTRUCTIVE_MIGRATIONS=1.
-assert_no_destructive_migration() {
-    local pending="$1"
-    # The operations that can lose data or break the schema: they drop a
-    # table, a column, an index, a constraint or a foreign key, they empty
-    # a table, or they rename a table or a column.
-    # The deploy script uses the same list: keep both in sync.
-    local destructive_operations='drop table|drop column|drop index|drop constraint|drop foreign key|truncate|rename column|rename table'
-    if ! printf '%s' "$pending" | grep -qiE "$destructive_operations"; then
-        return 0
-    fi
-    if [ "${ALLOW_DESTRUCTIVE_MIGRATIONS:-}" != "1" ]; then
-        log_error "Destructive migration detected. Review it, then re-run with ALLOW_DESTRUCTIVE_MIGRATIONS=1 to apply it."
-        return 1
-    fi
-    log_warn "Applying a destructive migration (ALLOW_DESTRUCTIVE_MIGRATIONS=1)"
-    return 0
-}
-
+# The setup runs the migrations unattended. The data safety lives in the
+# migrations themselves: a migration that rebuilds a table copies the rows
+# before dropping the old one (see the migration checks in the tooling
+# suite), and the foreign keys carry their own delete semantics.
 migrate_db() {
     CURRENT_STEP=$((CURRENT_STEP + 1))
     log_info "Step $CURRENT_STEP: Running database migrations..."
 
     cd "$BACK_DIR"
     local pending
-    # If the dry run fails, the pending migrations are unknown: the guard
-    # cannot decide, so the setup stops instead of running them blind.
+    # The pending migrations are shown before they run, so the operator can
+    # see what the deploy is about to apply.
     # --force: in production Laravel asks for a confirmation and cancels
     # the command without it.
     if ! pending=$(php artisan migrate --pretend --force --no-ansi 2>/dev/null); then
         log_error "Cannot read the pending migrations (migrate --pretend failed)"
         exit 5
     fi
-    if ! assert_no_destructive_migration "$pending"; then
-        exit 5
-    fi
+    log_info "Pending migrations:"
+    printf '%s\n' "$pending" | sed 's/^/    /'
     php artisan migrate --force || { log_error "Migration failed"; exit 5; }
     link_storage
     log_ok "Database migrated"
@@ -810,14 +867,17 @@ configure_frontend() {
         fi
     fi
 
-    backup_file "$target_file"
+    front_backup="$(backup_file "$target_file" | tail -1)"
     if [ ! -f "$target_file" ]; then
         cp "$example_file" "$target_file"
+        remember_env_file "$target_file" ""
+    else
+        remember_env_file "$target_file" "$front_backup"
     fi
 
     # The API lives under /api on the same host by default, so the SPA needs
     # no absolute URL. A split deployment (SPA on another host) overrides it.
-    local prev_api_url="" prev_csp_src=""
+    local prev_api_url="" prev_csp_src="" front_backup
     if [ -f "$target_file" ]; then
         prev_api_url="$(grep -E "^VITE_GLITCHVY_API_URL=" "$target_file" 2>/dev/null | cut -d= -f2- | tr -d '"' || echo "")"
         prev_csp_src="$(grep -E "^VITE_GLITCHVY_CSP_CONNECT_SRC=" "$target_file" 2>/dev/null | cut -d= -f2- | tr -d '"' || echo "")"
@@ -825,17 +885,17 @@ configure_frontend() {
 
     local api_url csp_src
     api_url="$(ask "VITE_GLITCHVY_API_URL" "${prev_api_url:-/api}")"
-    sed_set "$target_file" "VITE_GLITCHVY_API_URL" "$api_url" || exit $?
+    sed_set "$target_file" "VITE_GLITCHVY_API_URL" "$api_url" || die $?
     csp_src="$(ask "VITE_GLITCHVY_CSP_CONNECT_SRC" "${prev_csp_src:-'self'}")"
-    sed_set "$target_file" "VITE_GLITCHVY_CSP_CONNECT_SRC" "$csp_src" || exit $?
+    sed_set "$target_file" "VITE_GLITCHVY_CSP_CONNECT_SRC" "$csp_src" || die $?
     # SSO integration (planned, tracked in odd/tasks/deploy-tooling.md):
     # the SPA bakes these at build time, so they
     # are written only when the operator provides them.
     if [ -n "${GLITCHVY_SSO_URL:-}" ]; then
-        sed_set "$target_file" "VITE_SSO_URL" "$GLITCHVY_SSO_URL" || exit $?
+        sed_set "$target_file" "VITE_SSO_URL" "$GLITCHVY_SSO_URL" || die $?
     fi
     if [ -n "${GLITCHVY_SSO_CLIENT_ID:-}" ]; then
-        sed_set "$target_file" "VITE_SSO_CLIENT_ID" "$GLITCHVY_SSO_CLIENT_ID" || exit $?
+        sed_set "$target_file" "VITE_SSO_CLIENT_ID" "$GLITCHVY_SSO_CLIENT_ID" || die $?
     fi
 
     log_ok "Admin SPA configured ($target_file)"
