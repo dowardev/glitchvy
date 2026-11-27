@@ -756,6 +756,15 @@ tar -xzf /tmp/backend.tar.gz -C "${DEPLOY_PATH_BACKEND}"
 cd "${DEPLOY_PATH_BACKEND}"
 $BACKEND_REMOTE_CMD
 rm /tmp/backend.tar.gz
+
+# The web server reads the files as another user, so the permissions of
+# the release do not depend on the umask of the machine that built it.
+# The environment file keeps its owner-only permissions and the
+# directories the application writes to stay writable by the account.
+find "${DEPLOY_PATH_BACKEND}" -type d -exec chmod 755 {} +
+find "${DEPLOY_PATH_BACKEND}" -type f -exec chmod 644 {} +
+chmod -R 775 "${DEPLOY_PATH_BACKEND}/storage" "${DEPLOY_PATH_BACKEND}/bootstrap/cache" 2>/dev/null || true
+if [ -f "${DEPLOY_PATH_BACKEND}/.env" ]; then chmod 600 "${DEPLOY_PATH_BACKEND}/.env"; fi
 EOF
 )
     run_remote "Backend: extract & deploy on server" "$REMOTE_CMD"
@@ -795,6 +804,11 @@ set -e
 mkdir -p "${DEPLOY_PATH_FRONTEND}"
 tar -xzf /tmp/frontend.tar.gz -C "${DEPLOY_PATH_FRONTEND}"
 rm /tmp/frontend.tar.gz
+
+# The web server reads the files as another user, so the permissions of
+# the release do not depend on the umask of the machine that built it.
+find "${DEPLOY_PATH_FRONTEND}" -type d -exec chmod 755 {} +
+find "${DEPLOY_PATH_FRONTEND}" -type f -exec chmod 644 {} +
 EOF
 )
     run_remote "Frontend: extract on server" "$REMOTE_CMD"

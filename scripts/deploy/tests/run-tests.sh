@@ -784,6 +784,18 @@ else
     fail "the deploy prints the branch and the commit it runs" "the deploy does not report its branch and commit"
 fi
 
+# The permissions of the release are normalized on the server: the web
+# server reads the files as another user, and the umask of the machine
+# that built the release must not decide that. The environment file
+# keeps its owner-only permissions.
+if grep -q 'find "\${DEPLOY_PATH_BACKEND}" -type f -exec chmod 644' "$DEPLOY_SCRIPT" \
+    && grep -q 'chmod 600 "\${DEPLOY_PATH_BACKEND}/.env"' "$DEPLOY_SCRIPT" \
+    && grep -q 'find "\${DEPLOY_PATH_FRONTEND}" -type f -exec chmod 644' "$DEPLOY_SCRIPT"; then
+    pass "the deploy normalizes the permissions of the release"
+else
+    fail "the deploy normalizes the permissions of the release" "the permissions are not normalized"
+fi
+
 # The Apache rules of the document root travel with the deploy: they are
 # versioned with the frontend and not produced by the build.
 if grep -q 'Frontend: upload .htaccess' "$DEPLOY_SCRIPT"; then
